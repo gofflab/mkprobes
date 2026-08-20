@@ -21,6 +21,8 @@ genome.fa(.gz) + annotation.gtf/.gff3(.gz)
 dataset directory (dataset.json, transcripts.fasta, bowtie2 + k-mer indices)
         │  mkprobes transcripts     pick target transcripts (--longest)
         ▼
+        │  mkprobes make-codebook   assign readout bits (optionally expression-informed)
+        ▼
 per-target loop:  mkprobes candidates → screen → construct
         │  mkprobes filter-genes    panel QC
         ▼
@@ -156,7 +158,23 @@ mkprobes convert-to-transcripts data/ochierchiae genes.txt -m longest
 `mkprobes chkgenes data/ochierchiae genes.txt` performs the same resolution
 as a standalone validation step and writes `genes.converted.txt`.
 
-## 3. Candidates → screen → construct
+## 3. Generate the codebook
+
+The codebook maps each target to three distinct readout bits
+(`{"Och.687.1": [1, 2, 3], ...}`):
+
+```bash
+mkprobes make-codebook data/ochierchiae genes.tss.txt -o codebook.json
+```
+
+This auto-sizes an MHD code, assigns codewords (seeded), fills spare
+capacity with `Blank-N` decoys, and logs the codebook hash. **Optionally**,
+if expression data exists (a table registered at ingest, or any
+parquet/csv/tsv on disk), add `--expression <name-or-path>` to balance
+total expression load across readout bits — without it, the plain seeded
+assignment is used. Details: [Phase 2](phase_2_codebook_design.md).
+
+## 4. Candidates → screen → construct
 
 Design probes per target (targets are transcript IDs for custom datasets):
 
@@ -178,20 +196,6 @@ Notes specific to custom datasets:
   "Most common binders" log table or `<target>_offtarget_counts.csv`.
 - The rRNA/tRNA blocklist is enforced automatically when the dataset has one
   (a single warning is printed when it doesn't).
-- The codebook maps each target to its readout bits, e.g.
-  `{"Och.687.1": [1, 2, 3], "Och.958.1": [4, 5, 6]}` — three distinct bits
-  per target, no duplicate triplets. Generate one with:
-
-  ```bash
-  mkprobes make-codebook data/ochierchiae genes.tss.txt
-  ```
-
-  This auto-sizes an MHD code, assigns codewords (seeded), and fills spare
-  capacity with `Blank-N` decoys. If you registered an expression table at
-  ingest (or have one on disk), add `--expression fpkm` to balance total
-  expression load across readout bits — **optional**; without expression
-  data the plain seeded assignment is used. See
-  [Phase 2](phase_2_codebook_design.md).
 
 Batch loop:
 
@@ -207,7 +211,7 @@ done < genes.tss.txt
 Octopus reference numbers (17.9 kb / 16.6 kb / 16.0 kb targets): 1,700–2,800
 candidates each → 57–73 screened pairs → 54–69 constructed probes.
 
-## 4. Panel QC
+## 5. Panel QC
 
 ```bash
 mkprobes filter-genes output/ --genes genes.tss.txt \
@@ -219,7 +223,7 @@ gets everything at or above the threshold. For low-yield targets: try a
 different isoform, loosen `screen --minimum/--maxoverlap`, or accept verified
 homologous off-targets via `--allow`.
 
-## 5. Final assembly → orderable oligos
+## 6. Final assembly → orderable oligos
 
 Write a manifest (list of probesets) next to your codebook:
 

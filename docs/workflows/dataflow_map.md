@@ -7,7 +7,7 @@ This page gives a compact, execution-oriented map of inputs and outputs through 
 | Phase | Primary command(s) | Required inputs | Primary outputs | Purpose |
 |---|---|---|---|---|
 | 1. Dataset prep | `mkprobes prepare`, `mkprobes ingest`, or `mkprobes create-dataset` | species/ref selection, genome + GTF/GFF3, or FASTA | indexed dataset folder (`txome`, `cdna18.jf`, etc.) | define sequence universe + search indices |
-| 2. Codebook validation | `mkprobes chkgenes`, `mkprobes convert-to-transcripts`, `mkprobes hash` | target list + codebook JSON | normalized target list + codebook hash | lock panel identity and target naming |
+| 2. Targets + codebook | `mkprobes chkgenes`, `mkprobes convert-to-transcripts`, `mkprobes make-codebook` | target list (+ optional expression table) | transcript-resolved target list + codebook JSON + hash | lock panel identity, naming, and encoding |
 | 3A. Candidate gen | `mkprobes candidates` | dataset path, target, output path | `*_all.parquet`, `*_bowtie.parquet`, `*_crawled.parquet` | broad candidate search + alignment annotation |
 | 3B. Screening | `mkprobes screen` | candidate files + target | `*_screened_ol*.parquet` (+ stats) | filter and overlap-select high-quality probes |
 | 3C. Construction | `mkprobes construct` | screened files + codebook | `*_final_*.parquet` | emit final encoded probe constructs |

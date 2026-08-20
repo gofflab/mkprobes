@@ -8,6 +8,17 @@ per-gene candidate generation and off-target screening, probe construction
 against a codebook, panel QC, and final assembly into an orderable oligo
 pool.
 
+The workflow at a glance:
+
+```text
+1. dataset    mkprobes prepare | ingest      reference (mouse/human) | any species
+2. targets    mkprobes chkgenes / convert-to-transcripts
+3. codebook   mkprobes make-codebook
+4. probes     mkprobes candidates -> screen -> construct   (per target)
+5. panel QC   mkprobes filter-genes
+6. assembly   scripts/probegen/2_assemble_manifest.py      -> orderable oligos
+```
+
 New species? Start with the flagship runbook:
 [SOLAR probesets for a new species](workflows/solar_new_species.md).
 
