@@ -224,7 +224,10 @@ class TestDatasetFromComponents:
         mock_external_data_cls.assert_called_once_with(
             cache=dataset_path / source_fasta_file.with_suffix(".parquet").name,  # Cache is in dataset_path
             fasta=dataset_path / source_fasta_file.name,  # Initialized with original fasta_file
+            gtf_path=None,
             regen_cache=True,
+            fasta_key_regex=r"^(\S+)",
+            strip_version=True,
         )
         mock_ed_instance.bowtie_build.assert_called_once()
         mock_ed_instance.run_jellyfish.assert_called_once()
@@ -261,3 +264,341 @@ class TestDatasetFromComponents:
         # the path used by ExternalData for its cache, etc., implies this structure)
         assert expected_copied_fasta_path.exists(), "FASTA file was not copied to dataset directory"
         assert expected_copied_fasta_path.read_text() == dummy_fasta_content
+
+
+class TestLoadDataset:
+    """Resolution matrix for load_dataset()."""
+
+    def test_resolves_dataset_json_to_generic(self, tmp_path: Path):
+        from mkprobes.ext.dataset import load_dataset
+
+        ds_dir = tmp_path / "axolotl"
+        ds_dir.mkdir()
+        (ds_dir / "dataset.json").write_text(
+            json.dumps({
+                "species": "axolotl",
+                "external_data": {
+                    "default": {
+                        "fasta_name": "t.fa",
+                        "bowtie2_index_name": "t",
+                        "kmer18_name": "t.jf",
+                    }
+                },
+            })
+        )
+        (ds_dir / "t.jf").write_text("AGCTAGCTAGCTAGCTAG 2\n")
+        with patch("mkprobes.ext.dataset.ExternalData.from_definition") as mock_from_def:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.kmer = "t.jf"
+            mock_from_def.return_value = mock_ed
+            ds = load_dataset(ds_dir)
+        assert type(ds) is Dataset
+        assert ds.species == "axolotl"
+
+    def test_resolves_human_mouse_to_reference(self, tmp_path: Path):
+        from mkprobes.ext import dataset as dataset_mod
+
+        for name in ("human", "mouse"):
+            ref_dir = tmp_path / name
+            ref_dir.mkdir()
+            with patch.object(dataset_mod, "ReferenceDataset") as mock_ref:
+                dataset_mod.load_dataset(ref_dir)
+                mock_ref.assert_called_once_with(ref_dir)
+
+    def test_dataset_json_wins_over_folder_name(self, tmp_path: Path):
+        # A folder literally named "mouse" that carries dataset.json is a
+        # custom dataset, not a reference dataset.
+        from mkprobes.ext.dataset import load_dataset
+
+        ds_dir = tmp_path / "mouse"
+        ds_dir.mkdir()
+        (ds_dir / "dataset.json").write_text(
+            json.dumps({
+                "species": "mouse_custom",
+                "external_data": {
+                    "default": {
+                        "fasta_name": "t.fa",
+                        "bowtie2_index_name": "t",
+                        "kmer18_name": "t.jf",
+                    }
+                },
+            })
+        )
+        (ds_dir / "t.jf").write_text("AGCTAGCTAGCTAGCTAG 2\n")
+        with patch("mkprobes.ext.dataset.ExternalData.from_definition") as mock_from_def:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.kmer = "t.jf"
+            mock_from_def.return_value = mock_ed
+            ds = load_dataset(ds_dir)
+        assert type(ds) is Dataset
+
+    def test_unrecognized_path_fails_with_guidance(self, tmp_path: Path):
+        from mkprobes.ext.dataset import load_dataset
+
+        with pytest.raises(FileNotFoundError, match="mkprobes ingest.*create-dataset"):
+            load_dataset(tmp_path / "squid")
+
+
+class TestFromComponentsGtfAndBlocklist:
+    def _run(
+        self,
+        tmp_path: Path,
+        dummy_fasta_content: str,
+        dummy_jellyfish_content: str,
+        dummy_gtf_content: str,
+        **kwargs,
+    ):
+        src = tmp_path / "src"
+        src.mkdir(exist_ok=True)
+        fasta = src / "txome.fasta"
+        fasta.write_text(dummy_fasta_content)
+        gtf = src / "anno.gtf"
+        gtf.write_text(dummy_gtf_content)
+
+        ds_path = tmp_path / "ds"
+
+        with patch("mkprobes.ext.dataset.ExternalData") as mock_cls:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.fasta_path = ds_path / "txome.fasta"
+            kmer_path = ds_path / "txome.jf"
+            mock_ed.kmer = kmer_path
+            mock_ed.bowtie2_index = ds_path / "txome"
+            mock_cls.return_value = mock_ed
+
+            with patch("mkprobes.ext.dataset.jellyfish") as mock_jf:
+
+                def fake_jellyfish(seqs, out, k, **kw):
+                    Path(out).write_text("CCCCCCCCCCCCCCC 5\n")
+
+                mock_jf.side_effect = fake_jellyfish
+                ds_path.mkdir(exist_ok=True, parents=True)
+                kmer_path.write_text(dummy_jellyfish_content)
+                ds = Dataset.from_components(
+                    ds_path, fasta, species="axolotl", gtf_file=gtf, **kwargs
+                )
+        return ds, ds_path, mock_cls, mock_jf
+
+    def test_gtf_wired_into_definition(
+        self,
+        tmp_path: Path,
+        dummy_fasta_content: str,
+        dummy_jellyfish_content: str,
+        dummy_gtf_content: str,
+    ):
+        ds, ds_path, mock_cls, _ = self._run(
+            tmp_path,
+            dummy_fasta_content,
+            dummy_jellyfish_content,
+            dummy_gtf_content,
+            strip_version=False,
+        )
+        assert (ds_path / "anno.gtf").exists()
+        d = json.loads((ds_path / "dataset.json").read_text())
+        default = d["external_data"]["default"]
+        assert default["gtf_name"] == "anno.gtf"
+        assert default["cache_name"] == "txome.parquet"
+        assert default["strip_version"] is False
+        # ExternalData constructed with the copied GTF and strip flag
+        _, called_kwargs = mock_cls.call_args
+        assert called_kwargs["gtf_path"] == ds_path / "anno.gtf"
+        assert called_kwargs["strip_version"] is False
+
+    def test_blocklist_built_and_threaded(
+        self,
+        tmp_path: Path,
+        dummy_fasta_content: str,
+        dummy_jellyfish_content: str,
+        dummy_gtf_content: str,
+    ):
+        rrna = tmp_path / "rrna.fa"
+        rrna.write_text(">rrna1\nCCCCCCCCCCCCCCCCCC\n")
+        ds, ds_path, _, mock_jf = self._run(
+            tmp_path,
+            dummy_fasta_content,
+            dummy_jellyfish_content,
+            dummy_gtf_content,
+            blocklist_fasta=[rrna],
+        )
+        mock_jf.assert_called_once()
+        (seqs, out, k) = mock_jf.call_args[0]
+        assert k == 15
+        assert Path(out).name == "blocklist15.jf"
+        assert seqs == ["CCCCCCCCCCCCCCCCCC"]
+
+        d = json.loads((ds_path / "dataset.json").read_text())
+        assert d["blocklist_kmer_name"] == "blocklist15.jf"
+        # threaded into the constructed Dataset: check_kmers is live
+        assert ds.trna_rna_kmers == {"CCCCCCCCCCCCCCC"}
+        assert ds.check_kmers("AAACCCCCCCCCCCCCCCAAA")
+        assert not ds.check_kmers("ATATATATATATATATATATAT")
+
+    def test_empty_blocklist_fasta_raises(
+        self,
+        tmp_path: Path,
+        dummy_fasta_content: str,
+        dummy_jellyfish_content: str,
+        dummy_gtf_content: str,
+    ):
+        empty = tmp_path / "empty.fa"
+        empty.write_text("")
+        with pytest.raises(ValueError, match="No sequences found in blocklist"):
+            self._run(
+                tmp_path,
+                dummy_fasta_content,
+                dummy_jellyfish_content,
+                dummy_gtf_content,
+                blocklist_fasta=[empty],
+            )
+
+
+class TestFromFolderBlocklist:
+    def test_blocklist_threaded_from_definition(self, tmp_path: Path):
+        ds_dir = tmp_path / "ds"
+        ds_dir.mkdir()
+        (ds_dir / "dataset.json").write_text(
+            json.dumps({
+                "species": "axolotl",
+                "external_data": {
+                    "default": {
+                        "fasta_name": "t.fa",
+                        "bowtie2_index_name": "t",
+                        "kmer18_name": "t.jf",
+                    }
+                },
+                "blocklist_kmer_name": "blocklist15.jf",
+            })
+        )
+        (ds_dir / "t.jf").write_text("AGCTAGCTAGCTAGCTAG 2\n")
+        (ds_dir / "blocklist15.jf").write_text("GGGGGGGGGGGGGGG 7\n")
+        with patch("mkprobes.ext.dataset.ExternalData.from_definition") as mock_from_def:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.kmer = "t.jf"
+            mock_from_def.return_value = mock_ed
+            ds = Dataset.from_folder(ds_dir)
+        assert ds.trna_rna_kmers == {"GGGGGGGGGGGGGGG"}
+        assert ds.check_kmers("AAGGGGGGGGGGGGGGGAA")
+
+    def test_old_format_dataset_json_loads_without_blocklist(self, tmp_path: Path):
+        ds_dir = tmp_path / "ds"
+        ds_dir.mkdir()
+        (ds_dir / "dataset.json").write_text(
+            json.dumps({
+                "species": "squid",
+                "external_data": {
+                    "default": {
+                        "fasta_name": "t.fa",
+                        "bowtie2_index_name": "t",
+                        "kmer18_name": "t.jf",
+                    }
+                },
+            })
+        )
+        (ds_dir / "t.jf").write_text("AGCTAGCTAGCTAGCTAG 2\n")
+        with patch("mkprobes.ext.dataset.ExternalData.from_definition") as mock_from_def:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.kmer = "t.jf"
+            mock_from_def.return_value = mock_ed
+            ds = Dataset.from_folder(ds_dir)
+        assert ds.trna_rna_kmers is None
+
+
+class TestGenomeAndAnnotations:
+    def test_annotation_tables_copied_validated_loadable(
+        self,
+        tmp_path: Path,
+        dummy_fasta_content: str,
+        dummy_jellyfish_content: str,
+    ):
+        src = tmp_path / "src"
+        src.mkdir()
+        fasta = src / "txome.fasta"
+        fasta.write_text(dummy_fasta_content)
+        ortho = src / "orthologs.tsv"
+        ortho.write_text("transcript_id\thuman_symbol\nseq1\tSHANK3\nseq2\tGRIN1\n")
+        genome = src / "genome.fa"
+        genome.write_text(">scaffold_1\nACGTACGTACGT\n")
+
+        ds_path = tmp_path / "ds"
+        with patch("mkprobes.ext.dataset.ExternalData") as mock_cls:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.fasta_path = ds_path / "txome.fasta"
+            kmer_path = ds_path / "txome.jf"
+            mock_ed.kmer = kmer_path
+            mock_ed.bowtie2_index = ds_path / "txome"
+            mock_cls.return_value = mock_ed
+            ds_path.mkdir(parents=True)
+            kmer_path.write_text(dummy_jellyfish_content)
+            ds = Dataset.from_components(
+                ds_path,
+                fasta,
+                species="axolotl",
+                genome_fasta=genome,
+                annotations={"orthologs": ortho},
+            )
+
+        d = json.loads((ds_path / "dataset.json").read_text())
+        assert d["genome_fasta_name"] == "genome.fa"
+        assert d["annotations"] == {"orthologs": "orthologs.tsv"}
+        assert (ds_path / "genome.fa").exists()
+        assert (ds_path / "orthologs.tsv").exists()
+
+        assert ds.genome_fasta_path == ds_path / "genome.fa"
+        table = ds.annotation("orthologs")
+        assert table.filter(pl.col("transcript_id") == "seq1")[0, "human_symbol"] == "SHANK3"
+        with pytest.raises(KeyError, match="No annotation table named 'fpkm'"):
+            ds.annotation("fpkm")
+
+    def test_annotation_without_join_column_rejected(
+        self,
+        tmp_path: Path,
+        dummy_fasta_content: str,
+        dummy_jellyfish_content: str,
+    ):
+        src = tmp_path / "src"
+        src.mkdir()
+        fasta = src / "txome.fasta"
+        fasta.write_text(dummy_fasta_content)
+        bad = src / "bad.csv"
+        bad.write_text("some_column,other\na,b\n")
+
+        ds_path = tmp_path / "ds"
+        with patch("mkprobes.ext.dataset.ExternalData") as mock_cls:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.fasta_path = ds_path / "txome.fasta"
+            kmer_path = ds_path / "txome.jf"
+            mock_ed.kmer = kmer_path
+            mock_ed.bowtie2_index = ds_path / "txome"
+            mock_cls.return_value = mock_ed
+            ds_path.mkdir(parents=True)
+            kmer_path.write_text(dummy_jellyfish_content)
+            with pytest.raises(ValueError, match="no join column"):
+                Dataset.from_components(
+                    ds_path, fasta, species="axolotl", annotations={"bad": bad}
+                )
+
+    def test_from_folder_threads_genome_and_annotations(self, tmp_path: Path):
+        ds_dir = tmp_path / "ds"
+        ds_dir.mkdir()
+        (ds_dir / "dataset.json").write_text(
+            json.dumps({
+                "species": "axolotl",
+                "external_data": {
+                    "default": {
+                        "fasta_name": "t.fa",
+                        "bowtie2_index_name": "t",
+                        "kmer18_name": "t.jf",
+                    }
+                },
+                "genome_fasta_name": "genome.fa",
+                "annotations": {"fpkm": "fpkm.csv"},
+            })
+        )
+        (ds_dir / "t.jf").write_text("AGCTAGCTAGCTAGCTAG 2\n")
+        (ds_dir / "fpkm.csv").write_text("gene_id,fpkm\ng1,12.5\n")
+        with patch("mkprobes.ext.dataset.ExternalData.from_definition") as mock_from_def:
+            mock_ed = MagicMock(spec=ExternalData)
+            mock_ed.kmer = "t.jf"
+            mock_from_def.return_value = mock_ed
+            ds = Dataset.from_folder(ds_dir)
+        assert ds.genome_fasta_path == ds_dir / "genome.fa"
+        assert ds.annotation("fpkm")[0, "fpkm"] == 12.5

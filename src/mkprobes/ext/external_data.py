@@ -316,12 +316,13 @@ class ExternalData:
 
         return self.fasta_path.with_suffix("")
 
-    def bowtie_build(self, overwrite: bool = False):
+    def bowtie_build(self, overwrite: bool = False, interactive: bool = True):
         """
         Builds the Bowtie2 index for the FASTA file if it doesn't already exist.
 
         Checks for the existence of `fasta_stem.1.bt2`. If not found, it prompts
-        the user before running `bowtie2-build`.
+        the user before running `bowtie2-build` (unless `interactive=False`,
+        for scripted flows like `mkprobes ingest`).
 
         Raises:
             FileNotFoundError: If `bowtie2-build` fails to create the index files.
@@ -329,7 +330,8 @@ class ExternalData:
         if self.fasta_path.with_suffix(".1.bt2").exists() and not overwrite:
             return
         logger.info(f"Bowtie2 index not found for {self.fasta_path.stem}.")
-        input("\nPress Enter to start building...")
+        if interactive:
+            input("\nPress Enter to start building...")
         bowtie_build(self.fasta_path, self.fasta_path.stem)
         if not self.fasta_path.with_suffix(".1.bt2").exists():
             raise FileNotFoundError(
@@ -363,18 +365,20 @@ class ExternalData:
             raise FileNotFoundError("Kmer file not found. Please run jellyfish.")
         return self.fasta_path.with_suffix(".jf")
 
-    def run_jellyfish(self, kmer: int = 18, overwrite: bool = False):
+    def run_jellyfish(self, kmer: int = 18, overwrite: bool = False, interactive: bool = True):
         """
         Runs Jellyfish to count k-mers from the sequences in the FASTA file.
 
         Generates a `.jf` file (e.g., `fasta_stem.jf`). If the output file
         already exists and `overwrite` is False, the operation is skipped.
-        Prompts the user before running if not overwriting.
+        Prompts the user before running if not overwriting (unless
+        `interactive=False`, for scripted flows like `mkprobes ingest`).
 
         Args:
             kmer: The k-mer size to use for counting. Defaults to 18.
             overwrite: If True, run Jellyfish even if the output file exists.
                 Defaults to False.
+            interactive: If False, skip the confirmation prompt.
 
         Raises:
             FileNotFoundError: If Jellyfish fails to create the output file.
@@ -384,7 +388,7 @@ class ExternalData:
             return
 
         logger.info("Need to run jellyfish to get 18-mers in cDNA.")
-        if not overwrite:
+        if not overwrite and interactive:
             input("Press Enter to start running...")
 
         jellyfish(
