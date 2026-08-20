@@ -1,2 +1,14 @@
-!src/mkprobes/codebook/readout_ref_filtered.csv
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+docs/_build/
+.DS_Store
 
+!src/mkprobes/codebook/readout_ref_filtered.csv
+!src/mkprobes/data/**
