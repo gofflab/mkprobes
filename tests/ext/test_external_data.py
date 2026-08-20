@@ -612,3 +612,212 @@ class TestExternalDataFromDefinition:
         assert isinstance(ext_data.gtf, MockGTF)  # Should be MockGTF
         assert ext_data.bowtie2_index == base_path / definition_obj.bowtie2_index_name
         assert ext_data.kmer == base_path / definition_obj.kmer18_name
+
+
+class TestParseGtfDeNovo:
+    """
+    Tests for de novo annotation styles (MAKER, AUGUSTUS/BRAKER, StringTie,
+    NCBI-derived) and the parser behaviors that make them safe: verbatim ID
+    handling (strip_version=False), quote-aware attribute tokenization,
+    deterministic attribute discovery, name fallbacks, and GFF3 rejection.
+    """
+
+    def test_maker_ids_survive(self) -> None:
+        gtf = """\
+scaffold_1\tmaker\ttranscript\t100\t500\t.\t+\t.\tgene_id "maker-scaffold1-snap-gene-0.12"; transcript_id "maker-scaffold1-snap-gene-0.12-mRNA-1";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf), strip_version=False)
+        assert df[0, "gene_id"] == "maker-scaffold1-snap-gene-0.12"
+        assert df[0, "transcript_id"] == "maker-scaffold1-snap-gene-0.12-mRNA-1"
+
+    def test_augustus_isoforms_stay_distinct(self) -> None:
+        gtf = """\
+scaffold_1\tAUGUSTUS\ttranscript\t100\t500\t.\t+\t.\tgene_id "g1"; transcript_id "g1.t1";
+scaffold_1\tAUGUSTUS\ttranscript\t100\t480\t.\t+\t.\tgene_id "g1"; transcript_id "g1.t2";
+"""
+        # Non-numeric dot suffixes must survive in BOTH modes (the old parser
+        # truncated g1.t1 -> g1, silently merging isoforms).
+        for strip in (True, False):
+            df = ExternalData.parse_gtf(StringIO(gtf), strip_version=strip)
+            assert sorted(df["transcript_id"].to_list()) == ["g1.t1", "g1.t2"]
+
+    def test_stringtie_ids_verbatim_without_strip(self) -> None:
+        gtf = """\
+chr1\tStringTie\ttranscript\t100\t500\t.\t+\t.\tgene_id "STRG.1"; transcript_id "STRG.1.1"; ref_gene_id "ENSG001";
+chr1\tStringTie\ttranscript\t100\t480\t.\t+\t.\tgene_id "STRG.1"; transcript_id "STRG.1.2"; ref_gene_id "ENSG001";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf), strip_version=False)
+        assert sorted(df["transcript_id"].to_list()) == ["STRG.1.1", "STRG.1.2"]
+        assert df["gene_id"].unique().to_list() == ["STRG.1"]
+        assert df[0, "ref_gene_id"] == "ENSG001"
+
+    def test_stringtie_ids_collide_with_strip(self) -> None:
+        # Documents WHY ingested datasets default to strip_version=False:
+        # blanket .N-stripping merges StringTie isoforms.
+        gtf = """\
+chr1\tStringTie\ttranscript\t100\t500\t.\t+\t.\tgene_id "STRG.1"; transcript_id "STRG.1.1";
+chr1\tStringTie\ttranscript\t100\t480\t.\t+\t.\tgene_id "STRG.1"; transcript_id "STRG.1.2";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf), strip_version=True)
+        assert df["transcript_id"].unique().to_list() == ["STRG.1"]
+
+    def test_ncbi_style_ids_survive(self) -> None:
+        gtf = """\
+NC_004744.1\tGnomon\ttranscript\t100\t500\t.\t+\t.\tgene_id "gene-LOC5678"; transcript_id "rna-XM_012345.1";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf), strip_version=False)
+        assert df[0, "gene_id"] == "gene-LOC5678"
+        assert df[0, "transcript_id"] == "rna-XM_012345.1"
+        # With stripping, only the trailing numeric version goes; the prefix
+        # survives (old parser produced "gene" / "rna").
+        df2 = ExternalData.parse_gtf(StringIO(gtf), strip_version=True)
+        assert df2[0, "gene_id"] == "gene-LOC5678"
+        assert df2[0, "transcript_id"] == "rna-XM_012345"
+
+    def test_trinity_underscored_ids(self) -> None:
+        gtf = """\
+contig_9\tTrinity\ttranscript\t1\t900\t.\t+\t.\tgene_id "TRINITY_DN123_c0_g1"; transcript_id "TRINITY_DN123_c0_g1_i1";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf), strip_version=False)
+        assert df[0, "transcript_id"] == "TRINITY_DN123_c0_g1_i1"
+
+    def test_semicolon_inside_quoted_value(self) -> None:
+        gtf = """\
+chr1\tTEST\ttranscript\t1\t100\t.\t+\t.\tgene_id "G1"; transcript_id "T1"; description "DEAD/H-box helicase; putative"; gene_name "DHX1";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf))
+        assert df[0, "description"] == "DEAD/H-box helicase; putative"
+        assert df[0, "gene_id"] == "G1"
+        assert df[0, "gene_name"] == "DHX1"
+        # Text inside the quoted value must not be discovered as attribute keys.
+        assert "putative" not in df.columns
+        assert "helicase" not in df.columns
+
+    def test_duplicate_tag_keys_last_wins(self) -> None:
+        gtf = """\
+chr1\tHAVANA\ttranscript\t1\t100\t.\t+\t.\tgene_id "G1"; transcript_id "T1"; tag "basic"; tag "Ensembl_canonical"; tag "MANE_Select";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf))
+        assert df[0, "tag"] == "MANE_Select"
+
+    def test_gene_name_fallback_to_gene_attribute(self) -> None:
+        # NCBI RefSeq GTFs use `gene`, not `gene_name`.
+        gtf = """\
+chr1\tRefSeq\ttranscript\t1\t100\t.\t+\t.\tgene_id "LOC1"; transcript_id "XM_1"; gene "Shank3";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf))
+        assert df[0, "gene_name"] == "Shank3"
+
+    def test_gene_name_fallback_to_gene_id(self) -> None:
+        # Minimal de novo GTF with no naming attribute at all.
+        gtf = """\
+scaffold_1\tAUGUSTUS\ttranscript\t1\t100\t.\t+\t.\tgene_id "g1"; transcript_id "g1.t1";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf), strip_version=False)
+        assert df[0, "gene_name"] == "g1"
+        assert df[0, "transcript_name"] == "g1.t1"
+
+    def test_transcript_name_fallback(self) -> None:
+        gtf = """\
+chr1\tTEST\ttranscript\t1\t100\t.\t+\t.\tgene_id "G1"; transcript_id "T1"; gene_name "GN1";
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf))
+        assert df[0, "transcript_name"] == "T1"
+
+    def test_unquoted_values_parse(self) -> None:
+        gtf = """\
+chr1\tTEST\ttranscript\t1\t100\t.\t+\t.\tgene_id "G1"; transcript_id "T1"; level 2; exon_number 1;
+"""
+        df = ExternalData.parse_gtf(StringIO(gtf))
+        assert df[0, "level"] == "2"
+        assert df[0, "exon_number"] == "1"
+
+    def test_deterministic_schema(self) -> None:
+        # A rare attribute on one row must always be discovered (the old
+        # parser sampled 25 random rows unseeded).
+        rows = [
+            f'chr1\tTEST\ttranscript\t{i}\t{i + 50}\t.\t+\t.\tgene_id "G{i}"; transcript_id "T{i}";'
+            for i in range(200)
+        ]
+        rows[137] += ' rare_attr "needle";'
+        gtf = "\n".join(rows) + "\n"
+        for _ in range(3):
+            df = ExternalData.parse_gtf(StringIO(gtf))
+            assert "rare_attr" in df.columns
+            assert df.filter(pl.col("rare_attr") == "needle").height == 1
+
+    def test_gff3_rejected_with_guidance(self) -> None:
+        gff3 = """\
+scaffold_1\tmaker\tmRNA\t100\t500\t.\t+\t.\tID=rna-XM_1.1;Parent=gene-LOC123
+"""
+        with pytest.raises(ValueError, match="GFF3"):
+            ExternalData.parse_gtf(StringIO(gff3))
+
+    def test_empty_after_filter_names_available_features(self) -> None:
+        gtf = """\
+chr1\tTEST\texon\t1\t100\t.\t+\t.\tgene_id "G1"; transcript_id "T1";
+chr1\tTEST\tCDS\t1\t90\t.\t+\t.\tgene_id "G1"; transcript_id "T1";
+"""
+        with pytest.raises(ValueError, match="available features.*CDS.*exon"):
+            ExternalData.parse_gtf(StringIO(gtf))
+
+
+class TestStripVersionPlumbing:
+    """strip_version and fasta_key_regex must thread through ExternalData and its definition."""
+
+    @pytest.fixture
+    def denovo_fasta_file(self, tmp_path: Path) -> Path:
+        p = tmp_path / "denovo.fasta"
+        p.write_text(">STRG.1.1\nAAAACCCCGGGGTTTT\n>STRG.1.2\nTTTTGGGGCCCCAAAA\n")
+        return p
+
+    def test_key_func_verbatim_without_strip(self, denovo_fasta_file: Path, tmp_path: Path) -> None:
+        ext = ExternalData(
+            cache=tmp_path / "c.parquet", fasta=denovo_fasta_file, strip_version=False
+        )
+        assert ext.fa["STRG.1.1"].seq == "AAAACCCCGGGGTTTT"
+        assert ext.fa["STRG.1.2"].seq == "TTTTGGGGCCCCAAAA"
+        assert ext.key_func("STRG.1.1") == "STRG.1.1"
+
+    def test_key_func_strips_by_default(self, tmp_path: Path) -> None:
+        p = tmp_path / "ref.fasta"
+        p.write_text(">ENST0001.2\nAAAACCCC\n")
+        ext = ExternalData(cache=tmp_path / "c.parquet", fasta=p)
+        assert ext.fa["ENST0001"].seq == "AAAACCCC"
+        assert ext.key_func("ENST0001.2") == "ENST0001"
+
+    def test_definition_roundtrip_with_new_fields(self, tmp_path: Path) -> None:
+        d = ExternalDataDefinition(
+            fasta_name="denovo.fasta",
+            kmer18_name="denovo.jf",
+            bowtie2_index_name="denovo",
+            strip_version=False,
+        )
+        reloaded = ExternalDataDefinition.model_validate_json(d.model_dump_json())
+        assert reloaded.strip_version is False
+        assert reloaded.fasta_key_regex == r"^(\S+)"
+
+    def test_old_format_definition_still_parses(self) -> None:
+        # dataset.json files written before these fields existed must load
+        # with historical behavior.
+        old = {
+            "fasta_name": "x.fasta",
+            "kmer18_name": "x.jf",
+            "bowtie2_index_name": "x",
+        }
+        d = ExternalDataDefinition.model_validate(old)
+        assert d.strip_version is True
+        assert d.fasta_key_regex == r"^(\S+)"
+
+    def test_from_definition_threads_strip_version(
+        self, denovo_fasta_file: Path, tmp_path: Path
+    ) -> None:
+        d = ExternalDataDefinition(
+            fasta_name="denovo.fasta",
+            kmer18_name="denovo.jf",
+            bowtie2_index_name="denovo",
+            strip_version=False,
+        )
+        ext = ExternalData.from_definition(tmp_path, d)
+        assert ext.strip_version is False
+        assert ext.fa["STRG.1.1"].seq == "AAAACCCCGGGGTTTT"

@@ -4,7 +4,6 @@ import json
 import re
 from functools import cache
 from io import StringIO
-from itertools import chain
 from pathlib import Path
 from typing import Any, Sequence, overload
 
@@ -44,6 +43,37 @@ def _strip_version_suffix(token: str) -> str:
     return token
 
 
+# One GTF attribute token: `key "quoted value"` or `key unquoted_value`,
+# terminated by `;` or end of string. Matched sequentially so semicolons
+# inside quoted values are consumed as part of the value, never as a
+# record separator.
+_GTF_ATTR_TOKEN = re.compile(r'(\w+)\s+(?:"([^"]*)"|([^;\s][^;]*?))\s*(?:;|$)')
+
+
+def _parse_gtf_attributes(attributes: Sequence[str | None]) -> dict[str, list[str | None]]:
+    """
+    Tokenizes GTF attribute blobs into per-key columns.
+
+    Scans each blob left-to-right with a quote-aware tokenizer, so values
+    containing semicolons (e.g. `description "foo; bar"`) stay intact and
+    text inside quotes can never be mistaken for a key. Keys are discovered
+    across ALL rows (deterministic — no sampling). Repeated keys within a
+    row (e.g. GENCODE multi-`tag` rows) resolve to the LAST occurrence.
+    """
+    columns: dict[str, list[str | None]] = {}
+    for i, blob in enumerate(attributes):
+        row: dict[str, str] = {}
+        if blob:
+            for m in _GTF_ATTR_TOKEN.finditer(blob):
+                row[m.group(1)] = m.group(2) if m.group(2) is not None else m.group(3)
+        for key in row:
+            if key not in columns:
+                columns[key] = [None] * i
+        for key, values in columns.items():
+            values.append(row.get(key))
+    return columns
+
+
 class MockGTF:
     """
     A placeholder for GTF data when a GTF file is not provided or cannot be loaded.
@@ -77,6 +107,11 @@ class ExternalDataDefinition(BaseModel):
         - `cache_name` and `gtf_name` are optional. If `gtf_name` is not provided,
           the resulting `ExternalData` instance will use `MockGTF` for its GTF component,
           limiting its functionality.
+        - `fasta_key_regex` and `strip_version` default to the historical behavior
+          (first whitespace-delimited token, trailing `.N` version suffix stripped).
+          Datasets ingested from de novo annotations set `strip_version=False` so
+          GTF and FASTA identifiers match exactly (blanket `.N`-stripping would,
+          e.g., collapse StringTie's `STRG.1.1`/`STRG.1.2` isoforms).
     """
 
     cache_name: str | None = None
@@ -84,6 +119,8 @@ class ExternalDataDefinition(BaseModel):
     fasta_name: str
     kmer18_name: str
     bowtie2_index_name: str
+    fasta_key_regex: str = r"^(\S+)"
+    strip_version: bool = True
 
 
 class ExternalData:
@@ -148,24 +185,26 @@ class ExternalData:
           Mismatched keys will lead to `KeyError` or `ValueError` when fetching sequences.
 
     - **Required GTF Attributes**:
-        - The `parse_gtf` method (and thus initialization with a `gtf_path`) expects
-          `gene_id` and `transcript_id` to be present in the GTF attributes for each
-          feature row after sampling.
-        - If these are missing from the sampled attributes, a `ValueError` will be raised.
-          Ensure your GTF file adheres to this or that the sampled rows are representative.
+        - The `parse_gtf` method (and thus initialization with a `gtf_path`) requires
+          `gene_id` and `transcript_id` to be present in the GTF attributes; a
+          `ValueError` is raised otherwise. `gene_name`/`transcript_name` are
+          optional — missing values are filled from a fallback chain
+          (`gene_name` ← `Name` ← `gene` ← `gene_id`; `transcript_name` ← `transcript_id`).
 
     - **GTF Attribute Discovery**:
-        - Attribute keys (e.g., `gene_name`, `transcript_type`) are dynamically discovered
-          by sampling a subset of rows from the GTF file (default sample size is 25).
-        - If your GTF file is very large and has rare attribute keys not present in the
-          sample, these keys might not be parsed into separate columns.
+        - Attribute keys (e.g., `gene_name`, `transcript_type`) are discovered
+          deterministically across ALL rows with a quote-aware tokenizer.
+          Semicolons inside quoted values are safe; repeated keys within a row
+          (e.g. GENCODE `tag`) resolve to the last occurrence.
 
     - **ID Versioning**:
-        - The `parse_gtf` method attempts to strip version suffixes (e.g., ".1", ".5")
-          from `gene_id` and `transcript_id` by default.
-        - Methods like `ts_to_gene`, `eid_to_ts`, and `get_seq` also often strip
-          version suffixes from input IDs before lookup. Be mindful of this if your
-          workflow relies on versioned IDs.
+        - When `strip_version=True` (default), a trailing `.N` version suffix
+          (e.g., ".1", ".5") is stripped from FASTA keys, GTF
+          `gene_id`/`transcript_id`, and lookup inputs (via `key_func`), so all
+          three stay in agreement.
+        - When `strip_version=False`, IDs pass through verbatim everywhere. Use
+          this for de novo annotations whose IDs embed meaningful dots
+          (StringTie `STRG.1.1` vs `STRG.1.2`, AUGUSTUS `g1.t1`).
     """
 
     def __init__(
@@ -178,6 +217,7 @@ class ExternalData:
         fasta_key_regex: str = r"^(\S+)",
         bowtie2_index: str | None = None,
         kmer18: str | None = None,
+        strip_version: bool = True,
     ) -> None:
         """
         Initializes an ExternalData object.
@@ -192,16 +232,22 @@ class ExternalData:
             fasta_key_regex: Regex used to extract a lookup key from FASTA headers.
             bowtie2_index: Optional explicit name for the Bowtie2 index files (stem).
             kmer18: Optional explicit name for the 18-mer Jellyfish output file.
+            strip_version: If True (historical default), trailing `.N` version
+                suffixes are stripped from FASTA keys, GTF gene/transcript IDs,
+                and lookup inputs alike. Set False for datasets whose IDs must
+                match exactly (e.g. de novo annotations, where StringTie's
+                `STRG.1.1`/`STRG.1.2` would otherwise collide).
         """
         self.fasta_path = Path(fasta).resolve()
 
         self.key_regex = fasta_key_regex
+        self.strip_version = strip_version
         regex = re.compile(fasta_key_regex)
 
         def key_func(value: str) -> str:
             match = regex.match(value)
             token = (match.group(1) if match else value).strip()
-            return _strip_version_suffix(token)
+            return _strip_version_suffix(token) if strip_version else token
 
         self.key_func = key_func
 
@@ -223,7 +269,7 @@ class ExternalData:
             else:
                 if not cache:
                     raise ValueError("Cache path must be specified if GTF path is provided.")
-                self.gtf = self.parse_gtf(Path(gtf_path).resolve())
+                self.gtf = self.parse_gtf(Path(gtf_path).resolve(), strip_version=strip_version)
                 self.gtf.write_parquet(cache)
 
         self._override_bowtie2_index = bowtie2_index
@@ -238,8 +284,10 @@ class ExternalData:
             cache=path / definition.cache_name if definition.cache_name else None,
             fasta=path / definition.fasta_name,
             gtf_path=path / definition.gtf_name if definition.gtf_name else None,
+            fasta_key_regex=definition.fasta_key_regex,
             bowtie2_index=definition.bowtie2_index_name,
             kmer18=definition.kmer18_name,
+            strip_version=definition.strip_version,
         )
 
     @property
@@ -586,100 +634,134 @@ class ExternalData:
 
     @staticmethod
     def parse_gtf(
-        path: str | Path | StringIO, filters: Sequence[str] | None = ("transcript",)
+        path: str | Path | StringIO,
+        filters: Sequence[str] | None = ("transcript",),
+        strip_version: bool = True,
     ) -> pl.DataFrame:
         """
         Parses a GTF file into a Polars DataFrame.
 
-        Handles gzipped GTF files. It dynamically discovers attribute keys from the
-        GTF's attribute column by sampling rows, then parses these attributes into
-        separate columns. 'gene_id' and 'transcript_id' are mandatory and have their
-        version suffixes (e.g., .1) stripped.
+        Handles gzipped GTF files. Attribute keys are discovered deterministically
+        across ALL rows and parsed with a quote-aware tokenizer (semicolons inside
+        quoted values are safe; repeated keys such as GENCODE `tag` resolve to the
+        last occurrence). 'gene_id' and 'transcript_id' are mandatory. If a
+        `gene_name`/`transcript_name` attribute is absent, the columns are
+        synthesized from the best available fallback so downstream name lookups
+        never hit a missing column (`gene_name` ← `Name` ← `gene` ← `gene_id`;
+        `transcript_name` ← `transcript_id`).
 
         Args:
             path: Path to the GTF file or an StringIO object containing GTF data.
             filters: A sequence of feature types (e.g., "transcript", "exon") to keep.
                 If None, all features are kept. Defaults to ("transcript",).
+            strip_version: If True (default), strips a trailing `.N` version suffix
+                from `gene_id`/`transcript_id` — the same rule applied to FASTA
+                keys, so the two stay in agreement. Set False to keep IDs verbatim
+                (required for de novo annotations such as StringTie, where
+                `STRG.1.1` and `STRG.1.2` are distinct isoforms).
 
         Returns:
             A Polars DataFrame representing the parsed GTF data.
 
         Raises:
-            ValueError: If 'gene_id' or 'transcript_id' attributes are not found in the GTF.
+            ValueError: If the file looks like GFF3 rather than GTF, if no rows
+                match `filters`, or if 'gene_id'/'transcript_id' attributes are
+                not found.
         """
         if not isinstance(path, StringIO) and Path(path).suffix == ".gz":
             path = StringIO(gzip.open(path, "rt").read())
-        # fmt: off
-        # To get the original keys.
-        # list(reduce(lambda x, y: x | json.loads(y), jsoned['jsoned'].to_list(), {}).keys())
-        # attr_keys = (
-        #     "gene_id", "transcript_id", "gene_type", "gene_name", "gene_biotype", "transcript_type",
-        #     "transcript_name", "level", "transcript_support_level", "mgi_id", "tag",
-        #     # "havana_gene", "havana_transcript", "protein_id", "ccdsid", "ont",
-        # )
-        # fmt: on
 
-        df = (
-            pl.read_csv(
-                path,
-                comment_prefix="#",
-                separator="\t",
-                has_header=False,
-                new_columns=[
-                    "seqname",
-                    "source",
-                    "feature",
-                    "start",
-                    "end",
-                    "score",
-                    "strand",
-                    "frame",
-                    "attribute",
-                ],
-                schema_overrides=[
-                    pl.Utf8,
-                    pl.Utf8,
-                    pl.Utf8,
-                    pl.UInt32,
-                    pl.UInt32,
-                    pl.Utf8,
-                    pl.Utf8,
-                    pl.Utf8,
-                    pl.Utf8,
-                ],
-            )
-            .filter(pl.col("feature").is_in(filters) if filters else pl.col("feature").is_not_null())
-            .with_columns(
-                pl.concat_str([
-                    pl.lit("{"),
-                    pl.col("attribute")
-                    .str.replace_all(r"; (\w+) ", r', "$1": ')
-                    .str.replace_all(";", ",")
-                    .str.replace(r"(\w+) ", r'"$1": ')
-                    .str.replace(r",$", ""),
-                    pl.lit("}"),
-                ]).alias("jsoned")
-            )
+        df = pl.read_csv(
+            path,
+            comment_prefix="#",
+            separator="\t",
+            has_header=False,
+            new_columns=[
+                "seqname",
+                "source",
+                "feature",
+                "start",
+                "end",
+                "score",
+                "strand",
+                "frame",
+                "attribute",
+            ],
+            schema_overrides=[
+                pl.Utf8,
+                pl.Utf8,
+                pl.Utf8,
+                pl.UInt32,
+                pl.UInt32,
+                pl.Utf8,
+                pl.Utf8,
+                pl.Utf8,
+                pl.Utf8,
+            ],
         )
 
-        attr_keys: set[str] = set(
-            chain.from_iterable(list(json.loads(s)) for s in df.sample(min(25, len(df)))["jsoned"])
-        )
-        logger.info(f"Found {len(attr_keys)} attributes in GTF file: {attr_keys}")
+        # GFF3 masquerading as GTF is the most common format mix-up for de novo
+        # annotations. Detect it before feature-filtering, since GFF3 feature
+        # names (mRNA, not transcript) would otherwise yield a confusing
+        # "no rows" error.
+        sample_attr = next((a for a in df["attribute"].head(50).to_list() if a), None)
+        if (
+            sample_attr
+            and re.match(r"[\w.-]+=", sample_attr)
+            and not re.search(r'\w+ +"', sample_attr)
+        ):
+            raise ValueError(
+                "This looks like GFF3 (attributes use 'key=value'), not GTF. "
+                "Convert it first with gffread: `gffread <in.gff3> -T -o <out.gtf>`. "
+                "The `mkprobes ingest` command does this automatically."
+            )
 
-        if "gene_id" not in attr_keys:
+        available_features = df["feature"].unique().sort().to_list()
+        df = df.filter(
+            pl.col("feature").is_in(filters) if filters else pl.col("feature").is_not_null()
+        )
+        if df.is_empty():
+            raise ValueError(
+                f"No rows with feature in {tuple(filters or ())} found in GTF "
+                f"(available features: {available_features}). "
+                "Annotations lacking transcript rows can be normalized with "
+                "`gffread <in> -T -o <out.gtf>`, or pass filters=None."
+            )
+
+        attr_columns = _parse_gtf_attributes(df["attribute"].to_list())
+        logger.info(f"Found {len(attr_columns)} attributes in GTF file: {sorted(attr_columns)}")
+
+        if "gene_id" not in attr_columns:
             raise ValueError("Gene ID not found in GTF file. Required attribute per GTF 2.0 spec.")
-        if "transcript_id" not in attr_keys:
+        if "transcript_id" not in attr_columns:
             raise ValueError("Transcript ID not found in GTF file. Required attribute per GTF 2.0 spec.")
 
-        df = (
-            df.with_columns([
-                pl.col("jsoned").str.json_path_match(f"$.{name}").alias(name) for name in attr_keys
+        df = df.with_columns([
+            pl.Series(name, values, dtype=pl.Utf8) for name, values in attr_columns.items()
+        ])
+
+        if strip_version:
+            df = df.with_columns([
+                pl.col("gene_id").str.replace(r"\.\d+$", "").alias("gene_id"),
+                pl.col("transcript_id").str.replace(r"\.\d+$", "").alias("transcript_id"),
             ])
-            # .drop(["attribute", "jsoned"])
-            .with_columns([
-                pl.col("gene_id").str.extract(r"(\w+)(\.\d+)?").alias("gene_id"),
-                pl.col("transcript_id").str.extract(r"(\w+)(\.\d+)?").alias("transcript_id"),
-            ])
+
+        gene_name_sources = [c for c in ("gene_name", "Name", "gene") if c in df.columns]
+        if "gene_name" not in df.columns or df["gene_name"].null_count() > 0:
+            logger.info(
+                "gene_name incomplete or absent in GTF; filling from fallback chain: "
+                f"{' -> '.join([*gene_name_sources, 'gene_id'])}"
+            )
+        df = df.with_columns(
+            pl.coalesce([pl.col(c) for c in (*gene_name_sources, "gene_id")]).alias("gene_name")
         )
+        if "transcript_name" in df.columns:
+            df = df.with_columns(
+                pl.coalesce([pl.col("transcript_name"), pl.col("transcript_id")]).alias(
+                    "transcript_name"
+                )
+            )
+        else:
+            df = df.with_columns(pl.col("transcript_id").alias("transcript_name"))
+
         return pl.DataFrame(df)
