@@ -406,7 +406,12 @@ class Dataset:
             False otherwise. Logs a warning if `self.trna_rna_kmers` is not set.
         """
         if not self.trna_rna_kmers:
-            logger.warning("No tRNA-RNA kmers found. Skipping.")
+            if not getattr(self, "_warned_no_blocklist", False):
+                logger.warning(
+                    "No rRNA/tRNA blocklist k-mers in this dataset; blocklist filtering is a no-op. "
+                    "(Re-run ingest/create-dataset with --rrna-fasta/--trna-fasta to enable.)"
+                )
+                self._warned_no_blocklist = True
             return False
 
         k = len(next(iter(self.trna_rna_kmers)))

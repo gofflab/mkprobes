@@ -11,7 +11,7 @@ from Bio import Restriction, Seq
 from loguru import logger
 
 from ..candidates import _run_bowtie
-from ..ext.dataset import Dataset, ReferenceDataset
+from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
 from ..starmap.starmap import rotate, test_splint_padlock
 from ..utils.sequtils import reverse_complement as rc
 
@@ -156,7 +156,7 @@ def click_construct(
     restriction: list[str] | str | None = None,
 ):
     construct(
-        ReferenceDataset(path),
+        load_dataset(path),
         output_path,
         transcript=gene,
         codebook=json.loads(codebook.read_text()),
@@ -177,7 +177,7 @@ def construct(
     overwrite: bool = False,
 ):
     output_path = Path(output_path)
-    if isinstance(restriction, list) and restriction:
+    if isinstance(restriction, (list, tuple)) and restriction:
         restriction = "_" + "".join(restriction)
     restriction = restriction or ""
 
@@ -249,10 +249,17 @@ def construct(
 )
 def filter_genes(output_path: Path, genes: Path, min_probes: int, out: Path | None = None):
     def get_probes(gene: str):
-        ols = list(output_path.glob(f"{gene}_screened_ol*.parquet"))
-        if len(ols) > 0:
-            ol = max([int(re.search(r"_ol(\d+)", f.stem).group(1)) for f in ols])  # type: ignore
-            return pl.read_parquet(output_path / f"{gene}_screened_ol{ol}.parquet")
+        # Screened files are named {gene}_screened_ol{overlap}[_{enzymes}].parquet;
+        # overlap may be negative (default -2). Read the file with the highest
+        # overlap directly (never reconstruct the name - it may carry an
+        # enzyme suffix).
+        ols = [
+            (int(m.group(1)), f)
+            for f in output_path.glob(f"{gene}_screened_ol*.parquet")
+            if (m := re.search(r"_ol(-?\d+)", f.stem))
+        ]
+        if ols:
+            return pl.read_parquet(max(ols)[1])
         return pl.read_parquet(output_path / f"{gene}_screened.parquet")
 
     gene_list = genes.read_text().splitlines()
@@ -263,7 +270,7 @@ def filter_genes(output_path: Path, genes: Path, min_probes: int, out: Path | No
         ns[gene] = len(screened)
 
     if out:
-        out.write_text("\n".join(gene for gene, n in ns.items() if n > min_probes))
+        out.write_text("\n".join(gene for gene, n in ns.items() if n >= min_probes))
 
 
 # readouts = pl.read_csv("data/readout_ref_filtered.csv")

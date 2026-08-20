@@ -80,7 +80,9 @@ def handle_overlap(
         if not len(run):
             continue
 
-        priorities = np.sqrt(len(criteria) + 1 - run["priority"])
+        # Cast before sqrt: numpy sqrt on a UInt8-backed series yields float16,
+        # which polars cannot ingest.
+        priorities = np.sqrt((len(criteria) + 1 - run["priority"]).cast(pl.Float64).to_numpy())
         try:
             if i == 1:
                 ols = find_overlap(

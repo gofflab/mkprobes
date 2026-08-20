@@ -12,6 +12,7 @@ from loguru import logger
 
 from .utils._filtration import the_filter, visualize_probe_coverage
 from .utils.samframe import SAMFrame
+from .utils.sequtils import probe_identity_exprs
 
 sys.setrecursionlimit(5000)
 
@@ -47,10 +48,7 @@ def _screen(
     final, stats_filter = the_filter(ff, overlap=overlap)
     assert not final["seq"].str.contains("N").any(), "N appears out of nowhere."
 
-    final = final.with_columns(
-        full_name=pl.col("name").str.split("_").list.get(0) + "_" + pl.col("name").str.split("_").list.get(1),
-        probe_type=pl.col("name").str.split("_").list.get(2),
-    )
+    final = final.with_columns(probe_identity_exprs())
     final = (
         final.pivot(
             on="probe_type",

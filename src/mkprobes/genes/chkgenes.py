@@ -1,3 +1,4 @@
+import difflib
 import json
 import re
 from collections.abc import Sequence
@@ -10,9 +11,12 @@ import requests
 import rich_click as click
 from loguru import logger
 
-from ..ext.dataset import Dataset, ReferenceDataset
-from ..ext.external_data import get_ensembl
+from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
+from ..ext.external_data import MockGTF, get_ensembl
 from ..utils.printing import jprint
+
+GENERIC_MODES = ("longest", "all")
+REFERENCE_MODES = ("gencode", "ensembl", "canonical", "appris", "apprisalt")
 
 
 def find_outdated_ts(ts: str) -> tuple[Annotated[str, "gene_name"], Annotated[str, "gene_id"]]:
@@ -41,13 +45,10 @@ def find_outdated_ts(ts: str) -> tuple[Annotated[str, "gene_name"], Annotated[st
 @click.argument("path", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
 @click.argument("genes", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path))
 def chkgenes(path: Path, genes: Path):
-    """Validate/check that gene names are canonical in Ensembl"""
+    """Validate/check gene names (Ensembl for reference datasets; offline vs the GTF otherwise)"""
     from ..ext.fix_gene_name import check_gene_names
 
-    ds = ReferenceDataset(path)
-    if not ds.ensembl:
-        raise ValueError("Not a ReferenceDataset. Cannot check genes.")
-
+    ds = load_dataset(path)
     del path
     gs: list[str] = re.split(r"[\s,]+", genes.read_text())
     if not gs:
@@ -65,6 +66,20 @@ def chkgenes(path: Path, genes: Path):
         logger.error(f"Unique genes written to {genes.with_suffix('.unique.txt')}.\n")
         return
 
+    if not isinstance(ds, ReferenceDataset):
+        # Offline check against the dataset's own annotation (plus registered
+        # alias/ortholog tables), no Ensembl/mygene network dependency.
+        try:
+            res = get_transcripts_generic(ds, gs, mode="all")
+        except ValueError as e:
+            raise SystemExit(str(e)) from None
+        logger.info(f"{len(gs)} targets resolved to {res['transcript_id'].n_unique()} transcripts.")
+        genes.with_suffix(".converted.txt").write_text("\n".join(sorted(set(gs))))
+        logger.info(f"Written to {genes.with_suffix('.converted.txt')}.")
+        return
+
+    if not ds.ensembl:
+        raise ValueError("Not a ReferenceDataset. Cannot check genes.")
     converted, mapping, no_fix_needed = check_gene_names(ds.ensembl, gs, species=ds.species)
     print(converted)
     if mapping:
@@ -81,10 +96,122 @@ def chkgenes(path: Path, genes: Path):
         genes.with_suffix(".converted.txt").write_text("\n".join(sorted(converted)))
 
 
+def _resolve_via_annotations(dataset: Dataset, token: str) -> list[str]:
+    """
+    Resolves a token (e.g. a human ortholog symbol) through the dataset's
+    registered annotation tables.
+
+    Searches every non-join column of each table for a case-insensitive exact
+    match; hits map back through the table's `transcript_id`/`gene_id` join
+    column. Returns matching values from the join columns (transcript IDs
+    and/or gene IDs), empty if nothing matched.
+    """
+    hits: list[str] = []
+    for name in sorted(dataset.annotation_paths):
+        table = dataset.annotation(name)
+        join_cols = [c for c in ("transcript_id", "gene_id") if c in table.columns]
+        for col in table.columns:
+            if col in join_cols or table[col].dtype != pl.Utf8:
+                continue
+            matched = table.filter(pl.col(col).str.to_lowercase() == token.lower())
+            if not matched.is_empty():
+                for jc in join_cols:
+                    hits.extend(matched[jc].drop_nulls().to_list())
+                logger.info(f"Resolved {token!r} via annotation table {name!r} column {col!r}.")
+    return list(dict.fromkeys(hits))
+
+
+def get_transcripts_generic(
+    dataset: Dataset,
+    tokens: Sequence[str],
+    mode: Literal["longest", "all"] = "longest",
+) -> pl.DataFrame:
+    """
+    Annotation-driven transcript selection for custom (non-reference) datasets.
+
+    Each token is resolved in order: exact transcript ID (passthrough), exact
+    gene name or gene ID (expands to that gene's isoforms), then a
+    case-insensitive search of registered annotation tables (e.g. ortholog or
+    alias mappings). `mode="longest"` keeps, per gene, the isoform with the
+    longest sequence (from the FASTA, so introns don't distort the choice);
+    `mode="all"` keeps every isoform.
+
+    Returns:
+        pl.DataFrame[[gene_name, gene_id, transcript_id, transcript_name]]
+    """
+    if not len(tokens):
+        raise ValueError("No genes provided")
+    fasta_keys = set(dataset.data.fa.keys())
+
+    if isinstance(dataset.data.gtf, MockGTF):
+        missing = [t for t in tokens if t not in fasta_keys]
+        if missing:
+            raise ValueError(
+                f"Dataset has no GTF; targets must be FASTA record IDs. Not found: {missing[:10]}. "
+                "Re-create the dataset with --gtf (or mkprobes ingest) to enable gene-name lookups."
+            )
+        return pl.DataFrame({
+            "gene_name": tokens,
+            "gene_id": tokens,
+            "transcript_id": tokens,
+            "transcript_name": tokens,
+        })
+
+    gtf = dataset.data.gtf
+    cols = ["gene_name", "gene_id", "transcript_id", "transcript_name"]
+    tx = gtf.filter(pl.col("feature") == "transcript")[cols] if "feature" in gtf.columns else gtf[cols]
+
+    frames: list[pl.DataFrame] = []
+    missing: list[str] = []
+    for token in tokens:
+        hit = tx.filter(pl.col("transcript_id") == token)
+        if hit.is_empty():
+            hit = tx.filter((pl.col("gene_name") == token) | (pl.col("gene_id") == token))
+        if hit.is_empty():
+            via = _resolve_via_annotations(dataset, token)
+            if via:
+                hit = tx.filter(
+                    pl.col("transcript_id").is_in(via)
+                    | pl.col("gene_id").is_in(via)
+                    | pl.col("gene_name").is_in(via)
+                )
+        if hit.is_empty():
+            missing.append(token)
+            continue
+        if mode == "longest" and hit["transcript_id"].n_unique() > 1:
+            lengths = {
+                tid: len(dataset.data.fa[tid]) if tid in fasta_keys else 0
+                for tid in hit["transcript_id"].to_list()
+            }
+            per_gene = []
+            for _, group in hit.group_by("gene_id", maintain_order=True):
+                best = max(group["transcript_id"].to_list(), key=lambda t: lengths.get(t, 0))
+                per_gene.append(group.filter(pl.col("transcript_id") == best))
+            hit = pl.concat(per_gene)
+        frames.append(hit.unique(subset=["transcript_id"], maintain_order=True))
+
+    if missing:
+        vocabulary = set(tx["gene_name"].drop_nulls()) | set(tx["gene_id"].drop_nulls()) | set(
+            tx["transcript_id"].drop_nulls()
+        )
+        for token in missing:
+            suggestions = difflib.get_close_matches(token, vocabulary, n=3, cutoff=0.7)
+            logger.warning(
+                f"Could not resolve {token!r}"
+                + (f"; close matches: {suggestions}" if suggestions else " (no close matches)")
+            )
+        raise ValueError(
+            f"{len(missing)}/{len(tokens)} targets could not be resolved: {missing[:10]}. "
+            "Use transcript IDs / gene IDs from the annotation, or register an ortholog/alias "
+            "annotation table (create-dataset/ingest --annotation-table)."
+        )
+    return pl.concat(frames)
+
+
 def get_transcripts(
     dataset: Dataset,
     genes: Sequence[str],
-    mode: Literal["gencode", "ensembl", "canonical", "appris", "apprisalt"] = "canonical",
+    mode: Literal["gencode", "ensembl", "canonical", "appris", "apprisalt", "longest", "all"] = "canonical",
     output_path: Path | None = None,
     overwrite: bool = False,
 ) -> pl.DataFrame:
@@ -95,6 +222,20 @@ def get_transcripts(
     """
     if not len(genes):
         raise ValueError("No genes provided")
+
+    if not isinstance(dataset, ReferenceDataset):
+        if mode == "canonical":
+            logger.info("Custom dataset: using mode='longest' (canonical requires Ensembl).")
+            mode = "longest"
+        if mode not in GENERIC_MODES:
+            raise ValueError(
+                f"Mode {mode!r} requires a human/mouse reference dataset. "
+                f"Custom datasets support: {GENERIC_MODES}."
+            )
+        return get_transcripts_generic(dataset, genes, mode)
+
+    if mode in GENERIC_MODES:
+        return get_transcripts_generic(dataset, genes, mode)  # type: ignore[arg-type]
 
     if not dataset.ensembl:
         raise ValueError("Not a ReferenceDataset. Cannot get transcripts.")
@@ -184,27 +325,30 @@ def get_transcripts(
 @click.option(
     "-m",
     "--mode",
-    type=click.Choice(["gencode", "ensembl", "canonical", "appris", "apprisalt"]),
+    type=click.Choice([*REFERENCE_MODES, *GENERIC_MODES]),
     default="canonical",
 )
 def convert_to_transcripts(
     path: Path,
     genes: Path,
-    mode: Literal["gencode", "ensembl", "canonical", "appris", "apprisalt"] = "canonical",
+    mode: Literal["gencode", "ensembl", "canonical", "appris", "apprisalt", "longest", "all"] = "canonical",
 ):
-    """Validate/check that gene names are canonical in Ensembl"""
-    ds = ReferenceDataset(path)
+    """Convert gene names to transcript IDs (canonical for reference datasets; longest/all otherwise)"""
+    ds = load_dataset(path)
     del path
     gene_names = genes.read_text().splitlines()
     assert len(gene_names) == len(set(gene_names))
     res = get_transcripts(ds, gene_names, mode=mode)
 
-    res = res.group_by("gene_name", maintain_order=True).agg(pl.all().first())
+    if mode != "all":
+        res = res.group_by("gene_name", maintain_order=True).agg(pl.all().first())
 
     genes.with_suffix(".tss.txt").write_text("\n".join(sorted(res["transcript_name"])))
-    assert len(res["transcript_name"]) == len({
-        x["transcript_name"].split("-")[0] for x in res.iter_rows(named=True)
-    })
+    if isinstance(ds, ReferenceDataset):
+        # GENCODE-style names (Sox2-201): one transcript per base gene name.
+        assert len(res["transcript_name"]) == len({
+            x["transcript_name"].split("-")[0] for x in res.iter_rows(named=True)
+        })
     logger.info(f"Written to {genes.with_suffix('.tss.txt')}.")
 
 
@@ -213,17 +357,19 @@ def convert_to_transcripts(
 @click.argument("path", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
 @click.option("--gene", type=str)
 @click.option("--genefile", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path))
-@click.option("--canonical", "mode", flag_value="canonical", default=True, help="Outputs canonical transcript only")
+@click.option("--canonical", "mode", flag_value="canonical", default=True, help="Outputs canonical transcript only (reference datasets; falls back to --longest for custom datasets)")
 @click.option("--gencode"  , "mode", flag_value="gencode", help="Outputs all transcripts from GENCODE basic")
 @click.option("--ensembl"  , "mode", flag_value="ensembl", help="Outputs all transcripts from Ensembl")
 @click.option("--appris"   , "mode", flag_value="appris" , help="Outputs all principal transcripts from APPRIS (dominant coding transcripts)")
+@click.option("--longest"  , "mode", flag_value="longest", help="Per gene, the isoform with the longest sequence (custom datasets; no network)")
+@click.option("--all"      , "mode", flag_value="all"    , help="Every isoform of each gene (custom datasets; no network)")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 # fmt: on
 def transcripts(
     path: Path,
     gene: str | None = None,
     genefile: Path | None = None,
-    mode: Literal["gencode", "ensembl", "canonical", "appris", "apprisalt"] = "canonical",
+    mode: Literal["gencode", "ensembl", "canonical", "appris", "apprisalt", "longest", "all"] = "canonical",
     verbose: bool = False,
 ):
     """Get transcript ID from gene name or gene ID"""
@@ -234,7 +380,7 @@ def transcripts(
         genes = [gene]
     else:
         raise ValueError("No gene provided")
-    res = get_transcripts(ReferenceDataset(path), genes, mode)
+    res = get_transcripts(load_dataset(path), genes, mode)
     if verbose:
         click.echo(res)
     else:

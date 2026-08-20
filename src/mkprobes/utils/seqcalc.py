@@ -134,7 +134,7 @@ def tm_pairwise(
     try:
         return max(tm(seq[slice(*x.span())], model=model, formamide=formamide) for x in r.finditer(p[1]))
     except ValueError:
-        return 0
+        return 0.0
 
 
 # %%

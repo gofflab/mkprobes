@@ -8,8 +8,8 @@ import pyfastx
 from loguru import logger
 
 from .constants import GOOD_SPECIES
-from .ext.dataset import Dataset, ReferenceDataset
-from .ext.external_data import ExternalData
+from .ext.dataset import Dataset, ReferenceDataset, load_dataset
+from .ext.external_data import ExternalData, MockGTF
 from .genes.chkgenes import get_transcripts
 from .starmap.starmap import split_probe
 from .utils._alignment import gen_fasta
@@ -401,13 +401,13 @@ def _run_transcript(
             pl.col("seq")
             .map_elements(
                 lambda s: tm(cast(str, s), "hybrid", formamide=formamide),
-                return_dtype=pl.Float32,
+                return_dtype=pl.Float64,
             )
             .alias("tm"),
             pl.col("seq")
             .map_elements(
                 lambda s: hp(cast(str, s), "hybrid", formamide=formamide),
-                return_dtype=pl.Float32,
+                return_dtype=pl.Float64,
             )
             .alias("hp"),
         ])
@@ -542,7 +542,25 @@ def _run_transcript_generic(
         )
     )
 
-    tss_allacceptable = set(allow + [transcript])
+    # Sibling isoforms of the target's gene are acceptable binders — parity
+    # with the reference path, which allows all isoforms via Ensembl. Without
+    # this, any multi-isoform gene fails screening: every probe "off-targets"
+    # its own siblings with near-perfect matches.
+    siblings: list[str] = []
+    if not isinstance(dataset.data.gtf, MockGTF):
+        gene_ids = dataset.data.gtf.filter(pl.col("transcript_id") == transcript)["gene_id"]
+        if len(gene_ids):
+            siblings = (
+                dataset.data.gtf.filter(pl.col("gene_id") == gene_ids[0])["transcript_id"]
+                .drop_nulls()
+                .to_list()
+            )
+            if len(siblings) > 1:
+                logger.info(
+                    f"Allowing {len(siblings) - 1} sibling isoform(s) of {transcript} "
+                    f"(gene {gene_ids[0]})."
+                )
+    tss_allacceptable = set(allow + siblings + [transcript])
 
     ff = SAMFrame(y).filter_by_match(tss_allacceptable, match=0.8, match_consec=0.8)
     if not len(ff):
@@ -563,18 +581,22 @@ def _run_transcript_generic(
             pl.col("seq")
             .map_elements(
                 lambda s: tm(cast(str, s), "hybrid", formamide=formamide),
-                return_dtype=pl.Float32,
+                return_dtype=pl.Float64,
             )
             .alias("tm"),
             pl.col("seq")
             .map_elements(
                 lambda s: hp(cast(str, s), "hybrid", formamide=formamide),
-                return_dtype=pl.Float32,
+                return_dtype=pl.Float64,
             )
             .alias("hp"),
         ])
         .with_columns(oks=pl.sum_horizontal(pl.col("^ok_.*$")))
-        # .filter(~pl.col("seq").map_elements(lambda x: check_kmers(cast(str, x), dataset.kmerset, 18)))
+        # rRNA/tRNA blocklist (mirrors the reference path); no-op when the
+        # dataset was built without blocklist FASTAs.
+        .filter(
+            ~pl.col("seq").map_elements(lambda x: dataset.check_kmers(cast(str, x)), return_dtype=pl.Boolean)
+        )
     )
 
     logger.info(f"Generated {len(ff)} candidates.")
@@ -627,7 +649,7 @@ def candidates(
     allow_ = allow.split(",") if allow else None
     disallow_ = disallow.split(",") if disallow else None
     get_candidates(
-        Dataset(path),
+        load_dataset(path),
         transcript=gene,
         seq=fasta,
         output=output,

@@ -64,8 +64,8 @@ def process(codebook: dict[str, list[int]], cwd: Path, n: int = 16):
             dfs[df]
             .with_columns(
                 hairpin=pl.max_horizontal(
-                    pl.col("cons_splint").map_elements(HHP, return_dtype=pl.Float32),
-                    pl.col("cons_pad").map_elements(HHP, return_dtype=pl.Float32),
+                    pl.col("cons_splint").map_elements(HHP, return_dtype=pl.Float64),
+                    pl.col("cons_pad").map_elements(HHP, return_dtype=pl.Float64),
                 ),
                 pos_start=pl.col("pos_start").list.get(0),
             )

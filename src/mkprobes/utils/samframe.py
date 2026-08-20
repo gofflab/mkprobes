@@ -11,6 +11,7 @@ from typing_extensions import Self
 
 from ._alignment import run_bowtie
 from .seqcalc import tm_pairwise
+from .sequtils import probe_coord_exprs
 from .typing import copy_signature, copy_signature_method
 
 T = TypeVar("T")
@@ -179,12 +180,7 @@ class SAMFrame(pl.DataFrame):
                     .otherwise(pl.col("transcript"))
                     .alias("transcript")
                 ] if transcript_regex else [])
-                + [
-                    pl.col("name").str.extract(r"(.+)_(.+):(\d+)-(\d+)", 1).alias("gene"),
-                    pl.col("name").str.extract(r"(.+)_(.+):(\d+)-(\d+)", 2).alias("transcript_ori"),
-                    pl.col("name").str.extract(r"(.+)_(.+):(\d+)-(\d+)", 3).cast(pl.UInt32).alias("pos_start"),
-                    pl.col("name").str.extract(r"(.+)_(.+):(\d+)-(\d+)", 4).cast(pl.UInt32).alias("pos_end"),
-                ])
+                + probe_coord_exprs())
                 if split_name
                 else []
             )
@@ -239,7 +235,7 @@ class SAMFrame(pl.DataFrame):
                 "mismatched_reference",
             ]).map_elements(
                 lambda x: tm_pairwise(x["seq"], x["cigar"], x["mismatched_reference"], formamide=formamide),
-                return_dtype=pl.Float32,
+                return_dtype=pl.Float64,
             )
         )
 

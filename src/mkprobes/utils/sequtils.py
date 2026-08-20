@@ -11,6 +11,55 @@ from matplotlib.axes import Axes
 
 name_splitter = re.compile(r"(.+)_(.+):(\d+)-(\d+)")
 
+# Probe names are structured `{gene}_{transcript}:{start}-{end}` with an
+# optional `_{splint|padlock}` suffix appended at the melt step. De novo IDs
+# may themselves contain underscores (TRINITY_DN123_c0_g1_i1) and dots
+# (STRG.1.1), so parsing must not naively split on `_`.
+_PROBE_NAME_RE = r"^(.+):(\d+)-(\d+)(?:_[A-Za-z]+)?$"
+
+
+def probe_coord_exprs() -> list[pl.Expr]:
+    """
+    Polars expressions extracting gene / transcript_ori / pos_start / pos_end
+    from a `name` column, robust to underscores inside IDs.
+
+    The generic pipeline always builds the prefix as `{transcript}_{transcript}`
+    (gene == transcript), so an even-duplicate prefix `X_X` unambiguously
+    yields gene = transcript = X for ANY X — including underscore-rich de novo
+    IDs. Otherwise (reference path, where IDs contain no underscores) the
+    prefix splits at its last underscore.
+    """
+    prefix = pl.col("name").str.extract(_PROBE_NAME_RE, 1)
+    plen = prefix.str.len_chars()
+    half = ((plen - 1) // 2).cast(pl.Int64)
+    first = prefix.str.slice(0, half)
+    mid = prefix.str.slice(half, 1)
+    second = prefix.str.slice(half + 1)
+    is_dup = (plen >= 3) & (mid == pl.lit("_")) & (first == second)
+    return [
+        pl.when(is_dup).then(first).otherwise(prefix.str.extract(r"^(.+)_([^_]+)$", 1)).alias("gene"),
+        pl.when(is_dup)
+        .then(first)
+        .otherwise(prefix.str.extract(r"^(.+)_([^_]+)$", 2))
+        .alias("transcript_ori"),
+        pl.col("name").str.extract(_PROBE_NAME_RE, 2).cast(pl.UInt32).alias("pos_start"),
+        pl.col("name").str.extract(_PROBE_NAME_RE, 3).cast(pl.UInt32).alias("pos_end"),
+    ]
+
+
+def probe_identity_exprs() -> list[pl.Expr]:
+    """
+    Polars expressions splitting a suffixed probe name into
+    full_name (`{gene}_{transcript}:{start}-{end}`) and probe_type
+    (`splint`/`padlock`, the final `_`-segment) — robust to underscores
+    inside IDs, unlike a positional split on `_`.
+    """
+    return [
+        pl.col("name").str.extract(r"^(.+)_([^_]+)$", 1).alias("full_name"),
+        pl.col("name").str.extract(r"^(.+)_([^_]+)$", 2).alias("probe_type"),
+    ]
+
+
 c = re.compile(r"(\d+)S(\d+)M")
 c2 = re.compile(r"(\d+)M")
 

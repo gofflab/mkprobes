@@ -18,7 +18,10 @@ class OverlapWeighted:
             raise ValueError("Lengths not equal")
         if any(end[i + 1] < end[i] for i in range(self.n - 1)):
             raise ValueError("Ends not sorted")
-        self.opt = np.ones(self.n + 1, dtype=np.uint32) * -1
+        # -1.0 marks "not yet computed". Float64 (not uint32): NumPy 2 forbids
+        # the old uint32 * -1 wraparound sentinel, and the weighted priorities
+        # are sqrt-derived floats that a uint32 array would silently truncate.
+        self.opt = np.full(self.n + 1, -1.0, dtype=np.float64)
         self.opt[0] = 0
         self.res = []
 
