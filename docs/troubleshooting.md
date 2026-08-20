@@ -2,7 +2,7 @@
 
 ## Installation and environment
 
-- If the `mkprobes` command is missing, run it through `uv run mkprobes` from the repository root, and re-run `uv sync` if needed.
+- If the `mkprobes` command is missing, activate your environment first (`source .venv/bin/activate` for uv installs, `conda activate mkprobes` for conda installs); re-run `uv sync` or `mamba env update -f environment.yml` if the environment is stale.
 - If external tools fail, confirm `bowtie2`, `jellyfish`, and `gffread` are on `PATH` (all available on bioconda).
 
 ## Probe design

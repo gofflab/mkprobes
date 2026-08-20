@@ -34,7 +34,8 @@ With `uv` (external tools must already be on `PATH`):
 
 ```bash
 uv sync --extra dev
-uv run mkprobes --help
+source .venv/bin/activate
+mkprobes --help
 ```
 
 Or with conda/mamba — one environment containing the package *and* the
@@ -51,8 +52,11 @@ for details.
 
 ## Tests
 
+With the environment activated:
+
 ```bash
-uv run --extra dev pytest
+pip install -e ".[dev]"
+pytest
 ```
 
 ## Notes

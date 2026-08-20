@@ -14,7 +14,7 @@ Assembly is driven by `scripts/probegen/2_assemble_manifest.py`, run from the re
 ### Check short/underperforming targets
 
 ```bash
-uv run python scripts/probegen/2_assemble_manifest.py panel_a/manifest.json short 12
+python scripts/probegen/2_assemble_manifest.py panel_a/manifest.json short 12
 ```
 
 This reports targets with fewer than threshold probes and may trigger interactive accept-list flow when off-target tables are available.
@@ -22,7 +22,7 @@ This reports targets with fewer than threshold probes and may trigger interactiv
 ### Generate final assembled outputs
 
 ```bash
-uv run python scripts/probegen/2_assemble_manifest.py panel_a/manifest.json gen
+python scripts/probegen/2_assemble_manifest.py panel_a/manifest.json gen
 ```
 
 The header/footer table and MHD matrices are vendored inside the package (loaded via `importlib.resources`); pass `--headerfooter` to override the header/footer table.

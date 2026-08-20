@@ -27,7 +27,7 @@ Use this path first when tuning a new panel. Single-target runs make parameter e
 ### Step 1: candidates
 
 ```bash
-uv run mkprobes candidates data/mouse --gene Pcp4 --output panel_a/output
+mkprobes candidates data/mouse --gene Pcp4 --output panel_a/output
 ```
 
 **What this step is doing**
@@ -59,7 +59,7 @@ Custom dataset notes (datasets from `ingest`/`create-dataset`):
 ### Step 2: screen
 
 ```bash
-uv run mkprobes screen panel_a/output Pcp4 --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI --overwrite
+mkprobes screen panel_a/output Pcp4 --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI --overwrite
 ```
 
 **What this step is doing**
@@ -83,7 +83,7 @@ Key arguments explained:
 ### Step 3: construct
 
 ```bash
-uv run mkprobes construct data/mouse panel_a/output --gene Pcp4 --codebook panel_a/codebook.json --target_probes 72 --restriction BamHI --restriction KpnI
+mkprobes construct data/mouse panel_a/output --gene Pcp4 --codebook panel_a/codebook.json --target_probes 72 --restriction BamHI --restriction KpnI
 ```
 
 **What this step is doing**
@@ -110,9 +110,9 @@ Key arguments explained:
 
 ```bash
 while read -r gene; do
-  uv run mkprobes candidates data/mouse --gene "$gene" --output panel_a/output
-  uv run mkprobes screen panel_a/output "$gene" --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI
-  uv run mkprobes construct data/mouse panel_a/output --gene "$gene" --codebook panel_a/codebook.json --target_probes 72 --restriction BamHI --restriction KpnI
+  mkprobes candidates data/mouse --gene "$gene" --output panel_a/output
+  mkprobes screen panel_a/output "$gene" --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI
+  mkprobes construct data/mouse panel_a/output --gene "$gene" --codebook panel_a/codebook.json --target_probes 72 --restriction BamHI --restriction KpnI
 done < panel_a/genes.converted.txt
 ```
 

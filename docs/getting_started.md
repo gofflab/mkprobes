@@ -12,7 +12,7 @@ This guide gives a practical first pass through `mkprobes`, focused on CLI-first
 
 ## Minimal first-run checklist
 
-- [ ] Installation complete ({doc}`installation`); `uv run mkprobes --help` works.
+- [ ] Installation complete ({doc}`installation`); `mkprobes --help` works.
 - [ ] You have `bowtie2`, `jellyfish`, and `gffread` in `PATH`.
 - [ ] You have a writable project folder with enough disk for intermediate parquet outputs.
 
@@ -43,7 +43,7 @@ cd project
 Reference dataset (mouse/human):
 
 ```bash
-uv run mkprobes prepare data --species mouse --threads 16
+mkprobes prepare data --species mouse --threads 16
 ```
 
 This creates/updates `data/mouse` with required GTF/FASTA, bowtie index, and k-mer files.
@@ -67,7 +67,7 @@ Rbfox3
 Validate names and emit converted names if needed:
 
 ```bash
-uv run mkprobes chkgenes data/mouse panel_a/genes.txt
+mkprobes chkgenes data/mouse panel_a/genes.txt
 ```
 
 If generated, prefer `panel_a/genes.converted.txt` as canonical target input.
@@ -91,10 +91,10 @@ Prepare `panel_a/codebook.json`:
 Record a stable identifier for this codebook:
 
 ```bash
-uv run mkprobes hash panel_a/codebook.json
+mkprobes hash panel_a/codebook.json
 ```
 
-Run strict codebook validation before generation. Save as `check_codebook.py` and run with `uv run python check_codebook.py`:
+Run strict codebook validation before generation. Save as `check_codebook.py` and run with `python check_codebook.py`:
 
 ```python
 import json
@@ -123,9 +123,9 @@ Run per target:
 
 ```bash
 while read -r gene; do
-  uv run mkprobes candidates data/mouse --gene "$gene" --output panel_a/output
-  uv run mkprobes screen panel_a/output "$gene" --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI
-  uv run mkprobes construct data/mouse panel_a/output --gene "$gene" --codebook panel_a/codebook.json --target_probes 72 --restriction BamHI --restriction KpnI
+  mkprobes candidates data/mouse --gene "$gene" --output panel_a/output
+  mkprobes screen panel_a/output "$gene" --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI
+  mkprobes construct data/mouse panel_a/output --gene "$gene" --codebook panel_a/codebook.json --target_probes 72 --restriction BamHI --restriction KpnI
 done < panel_a/genes.converted.txt
 ```
 
@@ -140,7 +140,7 @@ Why this exact order:
 Filter for targets meeting minimum probe count:
 
 ```bash
-uv run mkprobes filter-genes panel_a/output --genes panel_a/genes.converted.txt --min-probes 48 --out panel_a/genes.pass.txt
+mkprobes filter-genes panel_a/output --genes panel_a/genes.converted.txt --min-probes 48 --out panel_a/genes.pass.txt
 ```
 
 Why this step: panel quality should be decided at the panel level, not per-target in isolation.

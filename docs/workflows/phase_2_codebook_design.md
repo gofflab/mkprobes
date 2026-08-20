@@ -18,7 +18,7 @@ The codebook is the contract between biological targets and encoding bits. Even 
 ### Check and normalize names (reference datasets)
 
 ```bash
-uv run mkprobes chkgenes data/mouse panel_a/genes.txt
+mkprobes chkgenes data/mouse panel_a/genes.txt
 ```
 
 Possible outputs:
@@ -38,7 +38,7 @@ Possible outputs:
 ### Resolve transcripts
 
 ```bash
-uv run mkprobes convert-to-transcripts data/mouse panel_a/genes.converted.txt --mode canonical
+mkprobes convert-to-transcripts data/mouse panel_a/genes.converted.txt --mode canonical
 ```
 
 Mode options include `canonical`, `gencode`, `ensembl`, `appris`, `apprisalt`, `longest`, `all`.
@@ -96,7 +96,7 @@ Run these checks before phase 3.
 
 ### Check JSON structure and duplicate code tuples
 
-Save as `check_codebook_schema.py` and run with `uv run python check_codebook_schema.py`:
+Save as `check_codebook_schema.py` and run with `python check_codebook_schema.py`:
 
 ```python
 import json
@@ -126,7 +126,7 @@ print(f"Codebook validation OK ({len(codebook)} targets)")
 
 ### Check target-name mismatch vs run list
 
-Save as `check_codebook_targets.py` and run with `uv run python check_codebook_targets.py`:
+Save as `check_codebook_targets.py` and run with `python check_codebook_targets.py`:
 
 ```python
 import json
@@ -157,7 +157,7 @@ You can proceed to phase 3 only when all checks pass:
 Compute a stable hash for run logs/provenance:
 
 ```bash
-uv run mkprobes hash panel_a/codebook.json
+mkprobes hash panel_a/codebook.json
 ```
 
 **Intention:** create a stable identifier so you can reliably match output files to the exact codebook used.

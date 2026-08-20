@@ -1,6 +1,6 @@
 # CLI reference
 
-This page summarizes the `mkprobes` command surface and where each command fits. The package lives in its own repository ([github.com/gofflab/mkprobes](https://github.com/gofflab/mkprobes)); run commands with `uv run mkprobes ...` from the repo root.
+This page summarizes the `mkprobes` command surface and where each command fits. The package lives in its own repository ([github.com/gofflab/mkprobes](https://github.com/gofflab/mkprobes)); run commands with `mkprobes ...` from the repo root.
 
 For an end-to-end walkthrough on a non-model species, see {doc}`../workflows/solar_new_species`.
 
@@ -42,8 +42,8 @@ For an end-to-end walkthrough on a non-model species, see {doc}`../workflows/sol
 Manifest assembly and final export are driven by `scripts/probegen/2_assemble_manifest.py` (see {doc}`../workflows/phase_5_manifest_assembly`):
 
 ```bash
-uv run python scripts/probegen/2_assemble_manifest.py manifest.json short 12
-uv run python scripts/probegen/2_assemble_manifest.py manifest.json gen
+python scripts/probegen/2_assemble_manifest.py manifest.json short 12
+python scripts/probegen/2_assemble_manifest.py manifest.json gen
 ```
 
 Other scripts under `scripts/probegen/` (codebook generation, simulation) are lab-specific orchestration; for documentation-driven workflows, use the `mkprobes` CLI commands directly.

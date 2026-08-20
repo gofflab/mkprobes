@@ -29,8 +29,8 @@ scripts/probegen/2_assemble_manifest.py gen   →  orderable oligo pool
 
 ## 0. Prerequisites
 
-- Python ≥ 3.12, this package installed (`uv sync`; see
-  [Installation](../installation.md)).
+- Python ≥ 3.12, this package installed and its environment activated
+  (see [Installation](../installation.md) — uv or conda/mamba).
 - External tools on `PATH`: **gffread**, **bowtie2**, **jellyfish**
   (all on bioconda; `mkprobes ingest` checks them up front and prints exact
   install hints for anything missing). **RepeatMasker** is optional and only
@@ -51,7 +51,7 @@ Inputs you need:
 Always run validation first and read the report:
 
 ```bash
-uv run mkprobes ingest data/ochierchiae \
+mkprobes ingest data/ochierchiae \
     --genome refs/Ochierchiae_genome.fa.gz \
     --gtf refs/Ochier_stringtie_merged.gtf \
     --species octopus_chierchiae \
@@ -79,7 +79,7 @@ unless you register an ortholog table (below).
 Then run the full ingest:
 
 ```bash
-uv run mkprobes ingest data/ochierchiae \
+mkprobes ingest data/ochierchiae \
     --genome refs/Ochierchiae_genome.fa.gz \
     --gtf refs/Ochier_stringtie_merged.gtf \
     --species octopus_chierchiae \
@@ -126,7 +126,7 @@ Sanity check that everything round-trips (ingest already did this, but it's
 cheap to repeat after any manual change):
 
 ```bash
-uv run mkprobes transcripts data/ochierchiae --gene <any_gene_id> --longest
+mkprobes transcripts data/ochierchiae --gene <any_gene_id> --longest
 ```
 
 If you also have an independently produced transcriptome FASTA, compare it
@@ -139,10 +139,10 @@ For custom datasets, transcript selection is offline (no Ensembl):
 
 ```bash
 # one gene -> its longest isoform (default for custom datasets)
-uv run mkprobes transcripts data/ochierchiae --gene Och.576 --longest
+mkprobes transcripts data/ochierchiae --gene Och.576 --longest
 
 # a file of genes/IDs -> genes.tss.txt
-uv run mkprobes convert-to-transcripts data/ochierchiae genes.txt -m longest
+mkprobes convert-to-transcripts data/ochierchiae genes.txt -m longest
 ```
 
 - `--longest` picks, per gene, the isoform with the longest **sequence**
@@ -161,9 +161,9 @@ as a standalone validation step and writes `genes.converted.txt`.
 Design probes per target (targets are transcript IDs for custom datasets):
 
 ```bash
-uv run mkprobes candidates data/ochierchiae -g Och.687.1 -o output/
-uv run mkprobes screen output/ Och.687.1 --restriction BamHI,KpnI
-uv run mkprobes construct data/ochierchiae output/ -g Och.687.1 \
+mkprobes candidates data/ochierchiae -g Och.687.1 -o output/
+mkprobes screen output/ Och.687.1 --restriction BamHI,KpnI
+mkprobes construct data/ochierchiae output/ -g Och.687.1 \
     -c codebook.json --restriction BamHI --restriction KpnI
 ```
 
@@ -188,9 +188,9 @@ Batch loop:
 
 ```bash
 while read -r t; do
-  uv run mkprobes candidates data/ochierchiae -g "$t" -o output/
-  uv run mkprobes screen output/ "$t" --restriction BamHI,KpnI
-  uv run mkprobes construct data/ochierchiae output/ -g "$t" \
+  mkprobes candidates data/ochierchiae -g "$t" -o output/
+  mkprobes screen output/ "$t" --restriction BamHI,KpnI
+  mkprobes construct data/ochierchiae output/ -g "$t" \
       -c codebook.json --restriction BamHI --restriction KpnI
 done < genes.tss.txt
 ```
@@ -201,7 +201,7 @@ candidates each → 57–73 screened pairs → 54–69 constructed probes.
 ## 4. Panel QC
 
 ```bash
-uv run mkprobes filter-genes output/ --genes genes.tss.txt \
+mkprobes filter-genes output/ --genes genes.tss.txt \
     --min-probes 48 --out genes.pass.txt
 ```
 
@@ -230,9 +230,9 @@ Then assemble:
 
 ```bash
 # non-model species: either give RepeatMasker a supported taxon...
-uv run python scripts/probegen/2_assemble_manifest.py manifest.json gen --rm-species mollusca
+python scripts/probegen/2_assemble_manifest.py manifest.json gen --rm-species mollusca
 # ...or skip it explicitly
-uv run python scripts/probegen/2_assemble_manifest.py manifest.json gen --skip-repeatmasker
+python scripts/probegen/2_assemble_manifest.py manifest.json gen --skip-repeatmasker
 ```
 
 Outputs under `generated/`: `<name>.parquet`, `<name>_pad.fasta`,

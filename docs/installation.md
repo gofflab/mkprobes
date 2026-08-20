@@ -12,6 +12,8 @@
   - `gffread`
   - `RepeatMasker` (optional; only used at final manifest assembly)
 
+All commands in this documentation are written bare (`mkprobes ...`), assuming your environment is **activated**. Activate once per shell session as shown below.
+
 ## Option A: install with uv
 
 From the repository root:
@@ -22,10 +24,11 @@ uv sync
 
 This creates/updates the project virtual environment and installs `mkprobes` with all Python dependencies. External tools must already be on `PATH` (e.g. via Homebrew, module system, or a separate conda env).
 
-Run commands through `uv run`:
+Activate the environment, then run commands directly:
 
 ```bash
-uv run mkprobes --help
+source .venv/bin/activate
+mkprobes --help
 ```
 
 ## Option B: install with conda/mamba
@@ -46,7 +49,6 @@ mkprobes --help
 Notes:
 
 - Create the environment **from the repository root** — the package is installed editable (`pip: -e .`), so the path is relative.
-- With the environment active, run commands directly (`mkprobes ...`), no `uv run` prefix.
 - RepeatMasker is commented out in `environment.yml` (it is optional and pulls large repeat libraries); enable it there or add it later:
 
   ```bash
@@ -57,7 +59,7 @@ Notes:
 
 ## Verify installation
 
-Run these checks (prefix with `uv run` for Option A; run directly inside the activated conda env for Option B):
+With your environment activated:
 
 ```bash
 mkprobes --help
@@ -68,10 +70,8 @@ gffread --version && bowtie2 --version | head -1 && jellyfish --version
 To run the test suite:
 
 ```bash
-# Option A
-uv run --extra dev pytest
-# Option B
-pip install -e ".[dev]" && pytest
+pip install -e ".[dev]"
+pytest
 ```
 
 ## HPC/cluster add-on guidance
@@ -93,6 +93,6 @@ Practical tips:
 
 - `ModuleNotFoundError: click` or `loguru`:
   - You are likely outside the intended environment.
-  - Re-run commands through `uv run`, or re-run `uv sync`.
+  - Activate it (`source .venv/bin/activate` or `conda activate mkprobes`) and retry; re-run `uv sync` / `mamba env update -f environment.yml` if it is stale.
 - `mkprobes prepare` or `mkprobes ingest` fails on external binaries:
   - Confirm `bowtie2`, `jellyfish`, and `gffread` are available in `PATH` on both login and compute nodes.

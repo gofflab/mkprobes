@@ -15,13 +15,13 @@ Probe design quality is bounded by reference quality. If this phase is wrong or 
 ## 1A. Reference mode (recommended for human/mouse)
 
 ```bash
-uv run mkprobes prepare <DATA_ROOT> --species mouse --threads 16
+mkprobes prepare <DATA_ROOT> --species mouse --threads 16
 ```
 
 Example:
 
 ```bash
-uv run mkprobes prepare data --species human --threads 24
+mkprobes prepare data --species human --threads 24
 ```
 
 ### What it does
@@ -53,7 +53,7 @@ uv run mkprobes prepare data --species human --threads 24
 ## 1B. Ingest mode (any species, genome + annotation)
 
 ```bash
-uv run mkprobes ingest <DATASET_DIR> --genome genome.fa.gz --gtf annotation.gtf --species <SPECIES_NAME>
+mkprobes ingest <DATASET_DIR> --genome genome.fa.gz --gtf annotation.gtf --species <SPECIES_NAME>
 ```
 
 `ingest` validates the annotation, extracts transcript (or CDS) sequences with `gffread`, builds the bowtie2 and k-mer indices, and writes the dataset manifest. Useful flags include `--extract transcripts|cds`, `--rrna-fasta`/`--trna-fasta` (blocklist inputs), `--blocklist-biotypes`, `--annotation-table NAME=PATH`, `--keep-genome`, `--fasta-key-regex`, `--strip-version/--no-strip-version` (default: no strip), `--validate-only`, and `--overwrite`.
@@ -68,13 +68,13 @@ Ingested datasets additionally contain:
 ## 1C. Generic/custom dataset mode (transcriptome FASTA)
 
 ```bash
-uv run mkprobes create-dataset <DATASET_DIR> --fasta <REFERENCE_FASTA> --species <SPECIES_NAME>
+mkprobes create-dataset <DATASET_DIR> --fasta <REFERENCE_FASTA> --species <SPECIES_NAME>
 ```
 
 Example:
 
 ```bash
-uv run mkprobes create-dataset data/squid --fasta refs/squid_txome.fasta --species doryteuthis
+mkprobes create-dataset data/squid --fasta refs/squid_txome.fasta --species doryteuthis
 ```
 
 This writes `dataset.json` and required index/k-mer files in the target folder.

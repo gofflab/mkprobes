@@ -16,7 +16,7 @@ Per-target success does not guarantee panel success. This phase enforces panel-l
 Filter targets by minimum probe count:
 
 ```bash
-uv run mkprobes filter-genes panel_a/output --genes panel_a/genes.converted.txt --min-probes 48 --out panel_a/genes.pass.txt
+mkprobes filter-genes panel_a/output --genes panel_a/genes.converted.txt --min-probes 48 --out panel_a/genes.pass.txt
 ```
 
 Use this to identify targets requiring reruns/parameter tuning.
