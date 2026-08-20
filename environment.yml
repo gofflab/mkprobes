@@ -1,0 +1,23 @@
+# Conda/mamba environment for mkprobes: Python package + the external
+# bioinformatics tools the pipeline shells out to, in one environment.
+#
+# Create from the repository root (the pip `-e .` path is relative):
+#   mamba env create -f environment.yml    # or: conda env create -f environment.yml
+#   conda activate mkprobes
+#
+# RepeatMasker is optional (used only at final panel assembly); uncomment it
+# below or install later with: mamba install -n mkprobes -c bioconda repeatmasker
+name: mkprobes
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - pip
+  # External tools required on PATH (mkprobes ingest checks these):
+  - bowtie2
+  - kmer-jellyfish # provides the `jellyfish` binary
+  - gffread
+  # - repeatmasker # optional: final assembly repeat masking
+  - pip:
+      - -e .

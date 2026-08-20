@@ -1,6 +1,6 @@
 # Installation
 
-`mkprobes` lives in its own repository ([github.com/gofflab/mkprobes](https://github.com/gofflab/mkprobes)); the in-tree copy inside the fishtools repository is frozen legacy. Start with a reproducible environment, then install with `uv`.
+`mkprobes` lives in its own repository ([github.com/gofflab/mkprobes](https://github.com/gofflab/mkprobes)); the in-tree copy inside the fishtools repository is frozen legacy. Two supported setups: `uv` (Option A) or a conda/mamba environment (Option B). Both need the same external tools; Option B installs them for you from bioconda.
 
 ## Requirements
 
@@ -8,11 +8,11 @@
 - Python: `>=3.12` (from `pyproject.toml`).
 - External tools (needed on `PATH` for CLI probe design/prep; all available on bioconda):
   - `bowtie2`
-  - `jellyfish`
+  - `jellyfish` (bioconda package `kmer-jellyfish`)
   - `gffread`
   - `RepeatMasker` (optional; only used at final manifest assembly)
 
-## Install with uv
+## Option A: install with uv
 
 From the repository root:
 
@@ -20,23 +20,58 @@ From the repository root:
 uv sync
 ```
 
-This creates/updates the project virtual environment and installs `mkprobes` with all dependencies.
+This creates/updates the project virtual environment and installs `mkprobes` with all Python dependencies. External tools must already be on `PATH` (e.g. via Homebrew, module system, or a separate conda env).
 
-## Verify installation
-
-Run these checks from repo root:
+Run commands through `uv run`:
 
 ```bash
 uv run mkprobes --help
-uv run python -c "import mkprobes; print('mkprobes import OK')"
 ```
 
-If `mkprobes` is not found, ensure you are running through `uv run` (or have activated the project's `.venv`).
+## Option B: install with conda/mamba
+
+The repository ships an [`environment.yml`](https://github.com/gofflab/mkprobes/blob/main/environment.yml) that builds one environment containing the Python package **and** the external tools (bowtie2, jellyfish, gffread) from bioconda. From the repository root:
+
+```bash
+mamba env create -f environment.yml
+```
+
+(`conda env create -f environment.yml` works identically, just slower to solve.) Then:
+
+```bash
+conda activate mkprobes
+mkprobes --help
+```
+
+Notes:
+
+- Create the environment **from the repository root** — the package is installed editable (`pip: -e .`), so the path is relative.
+- With the environment active, run commands directly (`mkprobes ...`), no `uv run` prefix.
+- RepeatMasker is commented out in `environment.yml` (it is optional and pulls large repeat libraries); enable it there or add it later:
+
+  ```bash
+  mamba install -n mkprobes -c bioconda repeatmasker
+  ```
+
+- After a `git pull` the editable install picks up code changes automatically; re-run `mamba env update -f environment.yml` only when dependencies change.
+
+## Verify installation
+
+Run these checks (prefix with `uv run` for Option A; run directly inside the activated conda env for Option B):
+
+```bash
+mkprobes --help
+python -c "import mkprobes; print('mkprobes import OK')"
+gffread --version && bowtie2 --version | head -1 && jellyfish --version
+```
 
 To run the test suite:
 
 ```bash
+# Option A
 uv run --extra dev pytest
+# Option B
+pip install -e ".[dev]" && pytest
 ```
 
 ## HPC/cluster add-on guidance

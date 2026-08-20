@@ -30,10 +30,24 @@ and the splint/padlock header/footer table
 
 ## Installation
 
+With `uv` (external tools must already be on `PATH`):
+
 ```bash
 uv sync --extra dev
 uv run mkprobes --help
 ```
+
+Or with conda/mamba — one environment containing the package *and* the
+external tools (bowtie2, jellyfish, gffread) from bioconda:
+
+```bash
+mamba env create -f environment.yml
+conda activate mkprobes
+mkprobes --help
+```
+
+See the [installation docs](https://www.gofflab.org/mkprobes/installation.html)
+for details.
 
 ## Tests
 
