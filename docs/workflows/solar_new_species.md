@@ -180,9 +180,18 @@ Notes specific to custom datasets:
   (a single warning is printed when it doesn't).
 - The codebook maps each target to its readout bits, e.g.
   `{"Och.687.1": [1, 2, 3], "Och.958.1": [4, 5, 6]}` — three distinct bits
-  per target, no duplicate triplets. Generate one with
-  `scripts/probegen/o_codebook.py` (MHD codes; see
-  [Phase 2](phase_2_codebook_design.md)).
+  per target, no duplicate triplets. Generate one with:
+
+  ```bash
+  mkprobes make-codebook data/ochierchiae genes.tss.txt
+  ```
+
+  This auto-sizes an MHD code, assigns codewords (seeded), and fills spare
+  capacity with `Blank-N` decoys. If you registered an expression table at
+  ingest (or have one on disk), add `--expression fpkm` to balance total
+  expression load across readout bits — **optional**; without expression
+  data the plain seeded assignment is used. See
+  [Phase 2](phase_2_codebook_design.md).
 
 Batch loop:
 

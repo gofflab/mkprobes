@@ -2,7 +2,31 @@
 
 Phase 2 defines the codebook JSON mapping each target to the bit IDs that identify it in the SOLAR (splint/padlock, STARmap-style) assay.
 
-For CLI-first workflows, `mkprobes` consumes a codebook JSON as input. Codebook generation itself is often done with lab-specific tooling; this page focuses on validating and standardizing the codebook file before running probe generation.
+For CLI-first workflows, generate the codebook with `mkprobes make-codebook`, then validate it with the checks below before running probe generation.
+
+## Generating a codebook
+
+```bash
+mkprobes make-codebook <dataset> genes.tss.txt
+```
+
+This picks the smallest MHD code (minimum-Hamming-distance; matrices vendored in the package) whose capacity exceeds the target count by ≥5%, assigns each target three readout bits by seeded shuffle, fills spare capacity with `Blank-N` decoy codewords, and swaps any codeword that would perfectly confound imaging rounds onto a blank. Output defaults to `genes.codebook.json`; the codebook hash is logged for provenance.
+
+**Optional — expression-informed assignment.** If per-target expression data is available (it is not required), the assignment can instead be optimized to balance total expression load across readout bits, so no bit's fluorescence is dominated by a few highly expressed genes:
+
+```bash
+# name of an annotation table registered at ingest, or a parquet/csv/tsv path
+mkprobes make-codebook <dataset> genes.tss.txt --expression fpkm
+mkprobes make-codebook <dataset> genes.tss.txt --expression expression.tsv --expression-column tpm
+```
+
+The table needs a `transcript_id` and/or `gene_id` column; targets missing from it are filled with the table median (with a warning). `--iterations` (default 200) controls how many assignments are tried; the one with the highest per-bit load entropy wins. For single-cell-derived optimization, the Python API offers `CodebookPickerSingleCell.find_optimalish` (percentile-based per-cell load balancing).
+
+To extend an existing panel with non-overlapping bits:
+
+```bash
+mkprobes make-codebook <dataset> new_genes.txt --existing-codebook panel_v1.json
+```
 
 ## Why this phase matters
 
