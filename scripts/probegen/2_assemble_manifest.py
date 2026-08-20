@@ -3,6 +3,8 @@ import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from importlib.metadata import version as pkg_version
+from importlib.resources import files
 from itertools import cycle, islice
 from pathlib import Path
 
@@ -25,7 +27,10 @@ from mkprobes.utils._alignment import gen_fasta
 from mkprobes.utils.sequtils import reverse_complement as rc
 
 pl.Config.set_fmt_str_lengths(100)
-hfs = pl.read_csv(Path(__file__).parent.parent / "data/headerfooter.csv")
+# Splint/padlock header/footer table vendored inside the package;
+# override with --headerfooter on the CLI group.
+DEFAULT_HEADERFOOTER = Path(str(files("mkprobes") / "data" / "headerfooter.csv"))
+hfs = pl.read_csv(DEFAULT_HEADERFOOTER)
 console = rich.get_console()
 rich.traceback.install()
 species_mapping = {"mouse": "mus musculus", "human": "homo sapiens"}
@@ -51,7 +56,15 @@ def backfill(seq: str, target: int = 148):
     )
 
 
-def run(path: Path, probeset: ProbeSet, n: int = 16, toolow: int = 4, low: int = 12):
+def run(
+    path: Path,
+    probeset: ProbeSet,
+    n: int = 16,
+    toolow: int = 4,
+    low: int = 12,
+    rm_species: str | None = None,
+    skip_repeatmasker: bool = False,
+):
     rand = np.random.default_rng(0)
     idx = probeset.bcidx
     codebook = probeset.load_codebook(path)
@@ -100,14 +113,19 @@ def run(path: Path, probeset: ProbeSet, n: int = 16, toolow: int = 4, low: int =
 
     outpath = Path(path / "generated" / probeset.name)
     outpath.mkdir(exist_ok=True, parents=True)
-    # RepeatMasker
-    if probeset.species in species_mapping:
+    # RepeatMasker: explicit taxon (--rm-species) > built-in mouse/human
+    # mapping > skip. --skip-repeatmasker silences the skip warning.
+    rm_taxon = rm_species or species_mapping.get(probeset.species or "")
+    if skip_repeatmasker:
+        rm_taxon = None
+        logger.info("RepeatMasker skipped (--skip-repeatmasker).")
+    if rm_taxon:
         with ThreadPoolExecutor() as exc:
             for col_name in ["splint", "padlock"]:
                 (outpath / f"{col_name}.fasta").write_text(gen_fasta(dfs[col_name]).getvalue())
                 exc.submit(
                     subprocess.run,
-                    f'RepeatMasker -pa 16 -norna -s -no_is -species "{species_mapping[probeset.species]}" {outpath / f"{col_name}.fasta"}',
+                    f'RepeatMasker -pa 16 -norna -s -no_is -species "{rm_taxon}" {outpath / f"{col_name}.fasta"}',
                     shell=True,
                     check=True,
                 )
@@ -117,8 +135,12 @@ def run(path: Path, probeset: ProbeSet, n: int = 16, toolow: int = 4, low: int =
             for col_name in ["splint", "padlock"]
             if (outpath / f"{col_name}.fasta.masked").exists()
         }).filter(~pl.col("splint").str.contains("N") & ~pl.col("padlock").str.contains("N"))
-    else:
-        logger.warning("Species not found in species mapping. Skipping RepeatMasker.")
+    elif not skip_repeatmasker:
+        logger.warning(
+            f"No RepeatMasker taxon for species {probeset.species!r}; skipping. "
+            "Pass --rm-species '<taxon>' to run it (any taxon RepeatMasker's library supports), "
+            "or --skip-repeatmasker to silence this warning."
+        )
 
     if len(bads):
         msg = f"Too few probe pairs ({toolow=}) for {len(bads)} genes.\n{pl.DataFrame(bads).sort('count')}"
@@ -228,15 +250,42 @@ def run(path: Path, probeset: ProbeSet, n: int = 16, toolow: int = 4, low: int =
     (gen_path / (probeset.name + "_splint.fasta")).write_text(
         gen_fasta(out["splintcons"], names=range(len(out))).getvalue()
     )
+
+    from mkprobes.codebook.codebook import hash_codebook
+
+    (gen_path / (probeset.name + ".provenance.json")).write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now().isoformat(),
+                "mkprobes_version": pkg_version("mkprobes"),
+                "probeset": probeset.model_dump(),
+                "codebook_hash": hash_codebook(codebook),
+                "n_probe_pairs": len(out),
+                "repeatmasker": rm_taxon or "skipped",
+                "headerfooter": str(DEFAULT_HEADERFOOTER),
+            },
+            indent=2,
+        )
+    )
     return out
 
 
 # %%
 @click.group()
 @click.argument("manifest", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--headerfooter",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help=f"Override the splint/padlock header/footer table (default: vendored {DEFAULT_HEADERFOOTER.name}).",
+)
 @click.pass_context
-def cli(ctx: click.Context, manifest: Path):
+def cli(ctx: click.Context, manifest: Path, headerfooter: Path | None):
     ctx.ensure_object(dict)
+    if headerfooter is not None:
+        global hfs
+        hfs = pl.read_csv(headerfooter)
+        logger.info(f"Using header/footer table {headerfooter}.")
     mfs = TypeAdapter(list[ProbeSet]).validate_json(Path(manifest).read_text())
     ctx.obj["manifest"] = mfs
     ctx.obj["path"] = manifest.parent
@@ -433,8 +482,20 @@ def short(
 
 
 @cli.command()
+@click.option(
+    "--rm-species",
+    type=str,
+    default=None,
+    help="RepeatMasker taxon passed verbatim to -species (e.g. 'octopus', 'mollusca'). "
+    "Overrides the built-in mouse/human mapping.",
+)
+@click.option(
+    "--skip-repeatmasker",
+    is_flag=True,
+    help="Skip RepeatMasker explicitly (silences the no-taxon warning for non-model species).",
+)
 @click.pass_context
-def gen(ctx: click.Context):
+def gen(ctx: click.Context, rm_species: str | None, skip_repeatmasker: bool):
     mfs: list[ProbeSet] = ctx.obj["manifest"]
     path_main: Path = ctx.obj["path"]
     logger.info(f"{path_main=}")
@@ -453,7 +514,7 @@ def gen(ctx: click.Context):
             n = 34 if x.species == "human" else 24
             low = 24 if x.species == "human" else 16
 
-        probes = run(path, x, n=n, toolow=4, low=low)
+        probes = run(path, x, n=n, toolow=4, low=low, rm_species=rm_species, skip_repeatmasker=skip_repeatmasker)
 
         total_probes += len(probes) * 2
         logger.info(f"Cumulative probes: {total_probes}")

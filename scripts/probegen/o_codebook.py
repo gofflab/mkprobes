@@ -1,6 +1,8 @@
 # %%
 import json
+import os
 import re
+from importlib.resources import files
 from itertools import chain
 from pathlib import Path
 
@@ -10,8 +12,10 @@ from loguru import logger
 
 from mkprobes.codebook.codebook import CodebookPicker, bit_count, n_to_bit
 
-print(Path(__file__))
-static = Path(__file__).resolve().parent.parent / "static"
+# MHD code matrices are vendored inside the package; any matrix not vendored
+# is generated into a user cache dir (never into the installed package).
+VENDORED_MHD = Path(str(files("mkprobes") / "data" / "mhd"))
+MHD_CACHE = Path(os.environ.get("MKPROBES_MHD_CACHE", str(Path.home() / ".cache" / "mkprobes" / "mhd")))
 
 
 def _gen_mhd(n: int, on: int, min_dist: int = 4, seed: int = 0):
@@ -85,14 +89,18 @@ order = (
     list(chain.from_iterable([[i, i + 8, i + 16] for i in range(1, 9)])) + list(range(25, 50))
     # + list(range(31, 34))
 )
-paths = static.glob("*bit_on3_dist2.csv")
-ns = {
-    int(re.search(r"(\d+)", path.stem).group(1)): path.read_text().splitlines().__len__()
-    for path in sorted(paths)
-}
+# Vendored matrices win; the user cache holds any generated extras.
+matrix_paths: dict[int, Path] = {}
+for source in (VENDORED_MHD, MHD_CACHE):
+    if source.exists():
+        for path in sorted(source.glob("*bit_on3_dist2.csv")):
+            matrix_paths.setdefault(int(re.search(r"(\d+)", path.stem).group(1)), path)
+ns = {n: len(path.read_text().splitlines()) for n, path in matrix_paths.items()}
 for n in range(10, 31):
     if n not in ns:
-        ns[n] = len(_generate(static / f"{n}bit_on3_dist2.csv", n))
+        MHD_CACHE.mkdir(parents=True, exist_ok=True)
+        matrix_paths[n] = MHD_CACHE / f"{n}bit_on3_dist2.csv"
+        ns[n] = len(_generate(matrix_paths[n], n))
 
 
 def gen_codebook(tss: list[str], offset: int = 0, n_bits: int | None = None, seed: int = 0):
@@ -112,7 +120,7 @@ def gen_codebook(tss: list[str], offset: int = 0, n_bits: int | None = None, see
 
     logger.info(f"Using {n}-bit codebook with capacity {ns[n]}.")
 
-    cb = CodebookPicker(static / f"{n}bit_on3_dist2.csv", genes=tss)
+    cb = CodebookPicker(matrix_paths[n], genes=tss)
     cb.gen_codebook(seed)
     c = cb.export_codebook(seed, offset=0)
     out = {k: sorted(order[x + offset] for x in v) for k, v in c.items()}

@@ -1,5 +1,7 @@
 # mkprobes
 
+[![test](https://github.com/gofflab/mkprobes/actions/workflows/test.yml/badge.svg)](https://github.com/gofflab/mkprobes/actions/workflows/test.yml)
+
 `mkprobes` is the combinatorial FISH probe-design toolkit used to build **SOLAR**
 probesets (splint/padlock, STARmap-style). It provides a CLI covering the full
 workflow: reference/dataset preparation, per-target candidate generation,
