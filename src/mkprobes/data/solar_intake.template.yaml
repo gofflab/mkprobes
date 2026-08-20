@@ -1,0 +1,47 @@
+# SOLAR species intake manifest
+# One per dataset directory. `mkprobes ingest` auto-fills most fields;
+# provenance stubs marked with "" should be completed by the operator.
+manifest_version: 2
+
+species:
+  display_name: ""
+  internal_id: ""
+  taxonomy_id: null
+
+inputs:
+  genome_fasta: ""
+  genome_sha256: ""
+  annotation: ""
+  annotation_sha256: ""
+  annotation_format: ""          # gtf | gff3 (normalized to GTF at ingest)
+  blocklist_fasta: []
+  annotation_tables: {}
+
+provenance:
+  assembly_name: ""
+  assembly_source: ""            # e.g. NCBI accession, lab assembly ID
+  assembly_release_date: ""
+  annotation_method: ""          # e.g. BRAKER3, MAKER, StringTie, NCBI Gnomon
+  annotation_build_date: ""
+  data_owner: ""
+
+processing:
+  ingest_command: ""
+  extract_mode: ""               # transcripts (gffread -w) | cds (gffread -x)
+  fasta_key_regex: ""
+  strip_version: null
+  software_versions: {}
+
+quality_control:
+  n_genes: null
+  n_transcripts: null
+  transcripts_per_gene_median: null
+  gene_name_source: ""
+  validation_errors: null
+  validation_warnings: null
+  passed_for_probe_generation: false
+
+review:
+  reviewer: ""
+  review_date: ""
+  notes: ""

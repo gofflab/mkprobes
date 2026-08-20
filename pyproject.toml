@@ -24,6 +24,7 @@ dependencies = [
     "primer3-py>=2.2.0",
     "pyfastx>=2.1.0",
     "pydantic>=2.11.7",
+    "pyyaml>=6.0",
     "questionary>=2.1.1",
     "requests",
     "rich",
@@ -53,6 +54,9 @@ include = ["src/mkprobes", "tests", "scripts", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "external: requires external tools on PATH (gffread, bowtie2, jellyfish); skipped when absent",
+]
 
 [tool.ruff]
 line-length = 110

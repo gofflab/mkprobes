@@ -12,3 +12,4 @@ docs/_build/
 
 !src/mkprobes/codebook/readout_ref_filtered.csv
 !src/mkprobes/data/**
+/data/

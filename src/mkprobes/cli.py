@@ -8,6 +8,7 @@ import rich_click as click
 from .candidates import candidates
 from .codebook.finalconstruct import click_construct, filter_genes
 from .ext.dataset import Dataset, create_dataset
+from .ext.ingest import ingest
 from .genes.chkgenes import chkgenes, convert_to_transcripts, transcripts
 from .screen import screen
 from .utils._alignment import bowtie_build
@@ -76,6 +77,7 @@ main.add_command(transcripts)
 main.add_command(convert_to_transcripts)
 main.add_command(click_construct)
 main.add_command(create_dataset)
+main.add_command(ingest)
 
 
 if __name__ == "__main__":

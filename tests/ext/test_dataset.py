@@ -68,11 +68,14 @@ class TestParseJellyfish:
         assert df["kmer"][0] == "AGCTAGCTAGCTAGCTAG"
         assert df["count"][1] == 3
 
-    def test_parse_empty_file(self, tmp_path: Path):
+    def test_parse_empty_file_returns_empty_frame(self, tmp_path: Path):
+        # An existing-but-empty file means jellyfish ran and nothing cleared
+        # the count threshold - legitimate for small transcriptomes.
         jf_file = tmp_path / "empty.jf"
         jf_file.write_text("")
-        with pytest.raises(ValueError, match="Jellyfish file"):
-            parse_jellyfish(jf_file)
+        df = parse_jellyfish(jf_file)
+        assert df.is_empty()
+        assert df.columns == ["kmer", "count"]
 
     def test_parse_file_not_found(self):
         with pytest.raises(FileNotFoundError):

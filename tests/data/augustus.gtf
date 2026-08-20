@@ -1,0 +1,23 @@
+#!genome-build mini_species_v1
+scaffold_1	AUGUSTUS	transcript	1001	5100	.	+	.	gene_id "g1"; transcript_id "g1.t1";
+scaffold_1	AUGUSTUS	exon	1001	1800	.	+	.	gene_id "g1"; transcript_id "g1.t1"; exon_number "1";
+scaffold_1	AUGUSTUS	exon	2501	3400	.	+	.	gene_id "g1"; transcript_id "g1.t1"; exon_number "2";
+scaffold_1	AUGUSTUS	exon	4101	5100	.	+	.	gene_id "g1"; transcript_id "g1.t1"; exon_number "3";
+scaffold_1	AUGUSTUS	transcript	1001	5100	.	+	.	gene_id "g1"; transcript_id "g1.t2";
+scaffold_1	AUGUSTUS	exon	1001	1800	.	+	.	gene_id "g1"; transcript_id "g1.t2"; exon_number "1";
+scaffold_1	AUGUSTUS	exon	4101	5100	.	+	.	gene_id "g1"; transcript_id "g1.t2"; exon_number "2";
+scaffold_1	AUGUSTUS	transcript	8001	11000	.	-	.	gene_id "g2"; transcript_id "g2.t1";
+scaffold_1	AUGUSTUS	exon	8001	9200	.	-	.	gene_id "g2"; transcript_id "g2.t1"; exon_number "1";
+scaffold_1	AUGUSTUS	exon	10001	11000	.	-	.	gene_id "g2"; transcript_id "g2.t1"; exon_number "2";
+scaffold_2	AUGUSTUS	transcript	501	2500	.	+	.	gene_id "g3"; transcript_id "g3.t1";
+scaffold_2	AUGUSTUS	exon	501	2500	.	+	.	gene_id "g3"; transcript_id "g3.t1"; exon_number "1";
+scaffold_2	AUGUSTUS	transcript	5001	9800	.	-	.	gene_id "g4"; transcript_id "g4.t1";
+scaffold_2	AUGUSTUS	exon	5001	5600	.	-	.	gene_id "g4"; transcript_id "g4.t1"; exon_number "1";
+scaffold_2	AUGUSTUS	exon	6301	6900	.	-	.	gene_id "g4"; transcript_id "g4.t1"; exon_number "2";
+scaffold_2	AUGUSTUS	exon	7601	8200	.	-	.	gene_id "g4"; transcript_id "g4.t1"; exon_number "3";
+scaffold_2	AUGUSTUS	exon	9001	9800	.	-	.	gene_id "g4"; transcript_id "g4.t1"; exon_number "4";
+scaffold_3	AUGUSTUS	transcript	1001	3300	.	+	.	gene_id "g5"; transcript_id "g5.t1";
+scaffold_3	AUGUSTUS	exon	1001	1700	.	+	.	gene_id "g5"; transcript_id "g5.t1"; exon_number "1";
+scaffold_3	AUGUSTUS	exon	2501	3300	.	+	.	gene_id "g5"; transcript_id "g5.t1"; exon_number "2";
+scaffold_3	AUGUSTUS	transcript	5001	5120	.	+	.	gene_id "r1"; transcript_id "r1.t1";
+scaffold_3	AUGUSTUS	exon	5001	5120	.	+	.	gene_id "r1"; transcript_id "r1.t1"; exon_number "1";

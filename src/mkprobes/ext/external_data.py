@@ -365,7 +365,13 @@ class ExternalData:
             raise FileNotFoundError("Kmer file not found. Please run jellyfish.")
         return self.fasta_path.with_suffix(".jf")
 
-    def run_jellyfish(self, kmer: int = 18, overwrite: bool = False, interactive: bool = True):
+    def run_jellyfish(
+        self,
+        kmer: int = 18,
+        overwrite: bool = False,
+        interactive: bool = True,
+        hash_size: str = "10G",
+    ):
         """
         Runs Jellyfish to count k-mers from the sequences in the FASTA file.
 
@@ -395,6 +401,7 @@ class ExternalData:
             [x.seq for x in self.fa],
             self.fasta_path.with_suffix(".jf"),
             kmer,
+            hash_size=hash_size,
             minimum=10,
             counter=4,
         )

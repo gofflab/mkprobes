@@ -15,11 +15,21 @@ from .external_data import ExternalData, ExternalDataDefinition
 
 
 def parse_jellyfish(path: Path | str) -> pl.DataFrame:
-    """Parse a jellyfish output file."""
+    """
+    Parse a jellyfish output file.
+
+    An empty (but existing) file is legitimate: jellyfish ran to completion and
+    no k-mer cleared the count threshold (e.g. `-L 10` on a small
+    transcriptome). Returns an empty frame with the right schema in that case.
+    A *missing* file is still an error (raised upstream by `ExternalData.kmer`).
+    """
     try:
         return pl.read_csv(path, separator=" ", has_header=False, new_columns=["kmer", "count"])
     except pl.exceptions.NoDataError:
-        raise ValueError(f"Jellyfish file {path} is empty. Please delete and rerun create-dataset.")
+        logger.warning(
+            f"Jellyfish file {path} has no k-mers above threshold (normal for small transcriptomes)."
+        )
+        return pl.DataFrame({"kmer": [], "count": []}, schema={"kmer": pl.Utf8, "count": pl.Int64})
 
 
 ANNOTATION_JOIN_COLUMNS = ("transcript_id", "gene_id")
@@ -262,7 +272,11 @@ class Dataset:
             strip_version=strip_version,
         )
         external_data.bowtie_build(overwrite=overwrite, interactive=interactive)
-        external_data.run_jellyfish(overwrite=overwrite, interactive=interactive)
+        # Adaptive initial hash: jellyfish grows the hash as needed, so a
+        # smaller initial allocation is correct for any input and avoids a
+        # multi-second 10G-hash init on small transcriptomes.
+        hash_size = f"{max(new_path.stat().st_size // 4, 10_000_000)}"
+        external_data.run_jellyfish(overwrite=overwrite, interactive=interactive, hash_size=hash_size)
 
         blocklist_kmer_name: str | None = None
         if blocklist_fasta:
@@ -282,7 +296,12 @@ class Dataset:
                     f"Building 15-mer blocklist from {len(seqs)} sequences "
                     f"({len(blocklist_fasta)} file(s)) -> {blocklist_path.name}"
                 )
-                jellyfish(seqs, blocklist_path, 15)
+                jellyfish(
+                    seqs,
+                    blocklist_path,
+                    15,
+                    hash_size=f"{max(sum(map(len, seqs)) * 2, 10_000_000)}",
+                )
             blocklist_kmer_name = blocklist_path.name
 
         genome_fasta_name: str | None = None
