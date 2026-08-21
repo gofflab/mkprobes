@@ -1,6 +1,5 @@
 import difflib
 import json
-import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -12,9 +11,9 @@ import rich_click as click
 from loguru import logger
 
 from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
-from ..utils.targets import read_target_list
 from ..ext.external_data import MockGTF, get_ensembl
 from ..utils.printing import jprint
+from ..utils.targets import read_target_list
 
 GENERIC_MODES = ("longest", "all")
 REFERENCE_MODES = ("gencode", "ensembl", "canonical", "appris", "apprisalt")
@@ -56,13 +55,6 @@ def chkgenes(path: Path, genes: Path):
         if not gene.isascii():
             raise ValueError(f"{gene} not ASCII.")
 
-    if len(gs) != len(s := set(gs)):
-        [gs.remove(x) for x in s]
-        logger.critical(f"Non-unique genes found: {', '.join(gs)}.\n")
-        genes.with_suffix(".unique.txt").write_text("\n".join(sorted(list(s))))
-        logger.error(f"Unique genes written to {genes.with_suffix('.unique.txt')}.\n")
-        return
-
     if not isinstance(ds, ReferenceDataset):
         # Offline check against the dataset's own annotation (plus registered
         # alias/ortholog tables), no Ensembl/mygene network dependency.
@@ -89,7 +81,7 @@ def chkgenes(path: Path, genes: Path):
     elif not no_fix_needed:
         logger.warning("Some genes cannot be found.")
     else:
-        logger.info(f"{len(s)} genes checked out. No changes needed")
+        logger.info(f"{len(gs)} genes checked out. No changes needed")
         genes.with_suffix(".converted.txt").write_text("\n".join(sorted(converted)))
 
 

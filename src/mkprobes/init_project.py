@@ -22,7 +22,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .assembly import hfs
 from .codebook.codebook import ProbeSet
-from .constants import SOLAR_RESTRICTION
+from .constants import GOOD_SPECIES, SOLAR_RESTRICTION
 
 GENES_TEMPLATE = """\
 # One target per line: a gene name, or a transcript ID for a custom dataset.
@@ -61,7 +61,7 @@ checks the previous step's output before it starts.
 ```bash
 # 1. Resolve your target names, then pick one transcript per gene
 mkprobes chkgenes {dataset} genes.txt
-mkprobes convert-to-transcripts {dataset} genes.converted.txt -m longest
+mkprobes convert-to-transcripts {dataset} genes.converted.txt{transcript_mode}
 
 # 2. Assign readout bits to each target
 mkprobes make-codebook {dataset} genes.converted.tss.txt -o codebook.json
@@ -196,6 +196,9 @@ def init(project: Path, species: str, dataset: Path | None, bcidx: int, force: b
             dataset=dataset_path,
             dataset_parent=dataset_path.parent,
             docs_before="`before_you_start`",
+            # Reference datasets pick the canonical isoform from Ensembl; custom
+            # ones have no such annotation and fall back to the longest.
+            transcript_mode="" if species in GOOD_SPECIES else " -m longest",
         ),
     }
 

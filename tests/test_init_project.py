@@ -150,3 +150,30 @@ class TestReadTargetList:
 
         with pytest.raises(ValueError, match="no targets"):
             read_target_list(path)
+
+
+class TestGeneratedReadme:
+    """The README is the walkthrough a new user follows, so its commands have to
+    be real and appropriate to the species."""
+
+    @pytest.mark.parametrize(
+        "species,expected",
+        [("mouse", False), ("human", False), ("octopus", True)],
+    )
+    def test_transcript_mode_matches_the_dataset_kind(
+        self, runner: CliRunner, tmp_path: Path, species: str, expected: bool
+    ):
+        # Reference datasets pick the canonical isoform from Ensembl; only
+        # custom datasets need the longest-transcript fallback.
+        target = tmp_path / species
+        assert runner.invoke(cli.main, ["init", str(target), "--species", species]).exit_code == 0
+
+        readme = target.joinpath("README.md").read_text()
+        assert ("-m longest" in readme) is expected
+
+    def test_every_command_named_exists(self, project: Path):
+        import re
+
+        named = set(re.findall(r"^mkprobes ([a-z][a-z-]+)", project.joinpath("README.md").read_text(), re.MULTILINE))
+        assert named, "README names no commands"
+        assert named <= set(cli.main.commands), f"unknown: {named - set(cli.main.commands)}"
