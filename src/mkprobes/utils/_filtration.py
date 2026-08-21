@@ -57,7 +57,14 @@ def handle_overlap(
 
     # breakpoint()
     stats = {}
-    selected_global = set()
+    # The tier loop below is progressive relaxation *with restart*: tier `i`
+    # re-selects over every probe of priority <= i, from scratch, so each
+    # iteration is a complete, self-consistent tiling drawn from a strictly
+    # larger pool. The last tier to run is the answer -- tiers deliberately do
+    # not accumulate. Accumulating them would let each tier select blind to the
+    # positions earlier tiers already took, stacking near-duplicate probes onto
+    # the same target sequence; see docs/notes/probe_selection_defects.md.
+    selected: set[int] = set()
     # tss = df["transcript_ori"].unique().to_list()
     # assert len(tss) == 1, df
 
@@ -72,7 +79,7 @@ def handle_overlap(
     logger.info(f"Max pos_end: {df['pos_end'].max()}")
     for i in range(1, len(criteria) + 1):
         run = (
-            df.filter((pl.col("priority") <= i) & ~pl.col("index").is_in(selected_global))
+            df.filter(pl.col("priority") <= i)
             .filter(pl.col("name").str.ends_with("splint"))
             .select(["index", "pos_start", "pos_end", "priority"])
             .sort(["pos_end", "pos_start"])
@@ -97,17 +104,22 @@ def handle_overlap(
                     cast(Sequence[int], priorities),
                     overlap=overlap,
                 )
-            sel_local = set(run[ols]["index"].to_list())
-            logger.info(f"Priority {i}, selected {len(sel_local)} probes")
-            stats[f"selected_{i}"] = len(sel_local)
-            if len(sel_local) > n:
+            selected = set(run[ols]["index"].to_list())
+            logger.info(f"Priority {i}, selected {len(selected)} probes")
+            stats[f"selected_{i}"] = len(selected)
+            if len(selected) > n:
                 break
         except RecursionError:
-            print("Recursion error")
+            # Fall back on the last tier that completed. If none did, there is
+            # nothing to fall back on, so surface the real error rather than
+            # silently emitting an empty panel.
+            logger.error(f"Recursion error at priority {i}")
+            stats["recursion_error"] = i
+            if not selected:
+                raise
             break
 
-    selected_global |= sel_local  # type: ignore
-    selected_names = df.filter(pl.col("index").is_in(selected_global)).select(name=pair_name)["name"]
+    selected_names = df.filter(pl.col("index").is_in(selected)).select(name=pair_name)["name"]
     df = df.filter(pair_name.is_in(selected_names))
     logger.info(f"Selected {len(df) // 2} probes.")
     stats["selected_pair"] = len(df) // 2

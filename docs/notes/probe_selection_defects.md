@@ -1,15 +1,23 @@
 # Probe-tiling selection: two inherited defects
 
-Status: **investigated, not changed.** Both defects predate the port and are
-present verbatim in the upstream `fishtools` code. Both can change which probes
-end up in a panel, so neither has been touched pending a decision from whoever
-owns panel design.
+Both defects predate the port and are present verbatim in the upstream
+`fishtools` code.
 
-Reproduce any number below with:
+| | status |
+| --- | --- |
+| Defect 1 — `overlap` sign convention | **fix approved, not yet applied** — awaiting confirmation against a real crawl. Panel-changing. |
+| Defect 2 — `selected_global` outside its loop | **done** — dead code removed, `RecursionError` path guarded. Behaviour-preserving. |
+
+Reproduce any number below, and produce the real per-gene figures defect 1 is
+waiting on, with:
 
 ```bash
 python scripts/quantify_overlap_defects.py data/och_test_output --overlap -2
 ```
+
+The script reports per-gene probe counts under four variants (baseline, sign
+fix, accumulate, both) and checks on every run that its instrumented
+`handle_overlap` still reproduces the shipped `the_filter` exactly.
 
 ---
 
@@ -100,18 +108,37 @@ Production defaults (`--minimum 60 --maxoverlap 0`) disable the ladder —
 that pass a non-zero `--maxoverlap`, such as
 `docs/workflows/phase_3_candidate_screen_construct.md`.
 
-### Recommendation — **fix**
+### Decision — **fix, after confirming on the real crawl**
 
 Align `find_overlap` with `OverlapWeighted.q`:
 
 ```python
-if start[i] + overlap > end[out[-1]]:
+if start[i] + overlap > end[out[-1]]:      # was: start[i] - overlap
 ```
 
 It is the assay-correct convention, it is the one the parameter is documented
-and used as, and it makes the two selectors agree. Fixing it is *free* on
-ordinary genes (zero probes change) and only affects long high-quality genes,
-where it removes real overlapping-probe pairs.
+and used as, and it makes the two selectors agree. On ordinary-length genes it
+is free — zero probes change. It only affects long high-quality genes, where it
+removes real overlapping-probe pairs at a cost of a few percent of probes.
+
+**Not yet applied.** The proxy numbers above establish the direction and the
+mechanism, but the size of the change on the real panel depends on how many
+genes break at tier 1, which is a property of the actual crawl. Run the script
+against `data/och_test_output` and read the summary line:
+
+```
+break at tier 1 (greedy find_overlap reaches the panel; defect 1 is live): N/M
+```
+
+`N == 0` means the fix is a no-op on that panel and can land with no golden-test
+regeneration. `N > 0` means those `N` genes' oligos will change and
+`tests/test_assembly.py` needs regenerating — which is the intended signal to
+confirm the change is wanted before it lands.
+
+`tests/utils/test_algorithms.py` already pins the corrected convention behind
+`xfail(strict=True)`. Applying the one-line fix turns those nine tests into
+XPASS, which is the prompt to drop the marks and delete
+`test_greedy_currently_permits_overlap_at_negative_overlap`.
 
 ---
 
@@ -170,12 +197,24 @@ consequences are code-health only:
   candidate count. Dense inputs of 5 200 candidates completed fine. It is a
   latent robustness wart, not a reachable crash.
 
-### Recommendation — **clean up, do not "fix"**
+### Decision — **cleaned up, not "fixed"** (done)
 
-Delete `selected_global` and the no-op filter, assign the tier result to a
-plainly-named variable initialised before the loop, and drop the `# type:
-ignore`. Behaviour-preserving; no golden-test regeneration needed. Explicitly
-**do not** move the accumulation inside the loop.
+Applied in `handle_overlap`:
+
+- `selected_global` and the no-op `~is_in(...)` filter deleted; the tier result
+  is now a single `selected` set initialised before the loop, and the `# type:
+  ignore` is gone.
+- The `RecursionError` branch now logs which tier failed, records it in `stats`,
+  and re-raises if no tier ever completed rather than falling through to an
+  unbound name. Where a tier had completed, it still falls back to that tier —
+  unchanged.
+- A comment records why the tiers must not accumulate, so the next reader does
+  not re-derive it.
+
+Verified behaviour-preserving: panels are byte-identical across 34 proxy genes
+before and after, and the script's fidelity check still reports `OK`.
+`stats` keys are unchanged in normal operation, so `.stats.json` output is
+unaffected. The accumulation was explicitly **not** moved inside the loop.
 
 ---
 
@@ -203,3 +242,7 @@ The instrumented `handle_overlap` in `scripts/quantify_overlap_defects.py` is
 verified to reproduce the shipped `the_filter` exactly on every input it is run
 against (`baseline fidelity vs shipped the_filter: OK`), so running the script on
 the real crawl will give the real per-gene numbers directly.
+
+The proxy corpus is enough to establish the *mechanism* and the *direction* of
+each defect, which is what the recommendations rest on. It is not a substitute
+for the real per-gene counts, which is why defect 1 is held pending them.
