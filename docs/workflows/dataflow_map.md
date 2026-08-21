@@ -8,11 +8,11 @@ This page gives a compact, execution-oriented map of inputs and outputs through 
 |---|---|---|---|---|
 | 1. Dataset prep | `mkprobes prepare`, `mkprobes ingest`, or `mkprobes create-dataset` | species/ref selection, genome + GTF/GFF3, or FASTA | indexed dataset folder (`txome`, `cdna18.jf`, etc.) | define sequence universe + search indices |
 | 2. Targets + codebook | `mkprobes chkgenes`, `mkprobes convert-to-transcripts`, `mkprobes make-codebook` | target list (+ optional expression table) | transcript-resolved target list + codebook JSON + hash | lock panel identity, naming, and encoding |
-| 3A. Candidate gen | `mkprobes candidates` | dataset path, target, output path | `*_all.parquet`, `*_bowtie.parquet`, `*_crawled.parquet` | broad candidate search + alignment annotation |
+| 3A. Candidate gen | `mkprobes run-panel` (batch) or `mkprobes candidates` | dataset path, target, output path | `*_all.parquet`, `*_bowtie.parquet`, `*_crawled.parquet` | broad candidate search + alignment annotation |
 | 3B. Screening | `mkprobes screen` | candidate files + target | `*_screened_ol*.parquet` (+ stats) | filter and overlap-select high-quality probes |
 | 3C. Construction | `mkprobes construct` | screened files + codebook | `*_final_*.parquet` | emit final encoded probe constructs |
 | 4. Panel QC | `mkprobes filter-genes` | output path + target list | pass-list text output | enforce panel-level minimum probe count |
-| 5. Manifest assembly | `scripts/probegen/2_assemble_manifest.py` | manifest.json + final parquet files | assembled parquet/FASTA, `<panel>_final.txt`, provenance JSON | export orderable oligo pool |
+| 5. Manifest assembly | `mkprobes assemble` | manifest.json + final parquet files | assembled parquet/FASTA, `<panel>_final.txt`, provenance JSON | export orderable oligo pool |
 
 ## Key file names to watch
 

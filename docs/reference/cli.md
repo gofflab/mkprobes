@@ -35,6 +35,8 @@ For an end-to-end walkthrough on a non-model species, see {doc}`../workflows/sol
 
 ### Probe generation
 
+- `mkprobes run-panel PATH CODEBOOK [GENE] [options]`
+  - the batch driver: designs probes for every target in the codebook (`candidates -> screen -> construct`) across parallel workers; skips finished targets, applies `<codebook>.acceptable.json` (or `--allow-file`), records failures in `<codebook>.failed.txt`, and exits non-zero if any gene fails. `--list-failed`/`--list-failed-all` triage missing outputs. Production defaults: `--minimum 60 --maxoverlap 0 --restriction BamHI,KpnI --target-probes 48`.
 - `mkprobes candidates PATH --gene GENE --output output/ [options]`
 - `mkprobes screen DATA_DIR GENE [--minimum M] [--overlap L] [--maxoverlap L] [--restriction ...] [--overwrite]`
 - `mkprobes construct PATH OUTPUT_PATH --gene GENE --codebook CODEBOOK.json [options]`
@@ -44,13 +46,15 @@ For an end-to-end walkthrough on a non-model species, see {doc}`../workflows/sol
 - `mkprobes filter-genes OUTPUT_PATH --genes genes.txt --min-probes N [--out out.txt]`
 - `mkprobes hash CODEBOOK.json`
 
-## Probe-generation scripts
+## Manifest assembly
 
-Manifest assembly and final export are driven by `scripts/probegen/2_assemble_manifest.py` (see {doc}`../workflows/phase_5_manifest_assembly`):
+Manifest assembly and final export (see {doc}`../workflows/phase_5_manifest_assembly`):
 
 ```bash
-python scripts/probegen/2_assemble_manifest.py manifest.json short 12
-python scripts/probegen/2_assemble_manifest.py manifest.json gen
+mkprobes assemble manifest.json short 12     # triage under-provisioned genes (interactive off-target accept)
+mkprobes assemble manifest.json gen          # assemble the orderable oligo pool (deterministic)
 ```
 
-Other scripts under `scripts/probegen/` (simulation, batch drivers) are lab-specific orchestration; for documentation-driven workflows, use the `mkprobes` CLI commands directly. (`scripts/probegen/o_codebook.py` is a deprecated shim — codebook generation is now `mkprobes make-codebook`.)
+`gen` accepts `--rm-species '<taxon>'` / `--skip-repeatmasker` for non-model species and `--headerfooter` to override the vendored table.
+
+The remaining files under `scripts/probegen/` are deprecated shims (`o_codebook.py` -> `mkprobes make-codebook`; `1_run_codebook*.py` -> `mkprobes run-panel`; `2_assemble_manifest.py` -> `mkprobes assemble`) plus exploratory notebooks (`simulate.py` in-silico validation, `foridt.py`/`adt.py` IDT-ordering examples whose logic already lives in the package).

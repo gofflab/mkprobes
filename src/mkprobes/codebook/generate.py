@@ -191,7 +191,11 @@ def make_codebook(
     c = cb.export_codebook(chosen_seed, offset=0)
     out = {k: sorted(ORDER[x + offset] for x in v) for k, v in c.items()}
 
-    to_swap = [k for k, v in out.items() if tuple(v) in FORBIDDEN and not k.startswith("Blank")]
+    # Verbatim port of the original swap, INCLUDING blank entries: a blank
+    # holding a confounder codeword swaps with another blank. Kept identical
+    # so regenerated codebooks match the historical generator exactly
+    # (verified byte-equivalent against the original script).
+    to_swap = [k for k, v in out.items() if tuple(v) in FORBIDDEN]
     for i, k in enumerate(to_swap):
         out[f"Blank-{i + 1}"], out[k] = out[k], out[f"Blank-{i + 1}"]
 

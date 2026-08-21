@@ -109,14 +109,24 @@ Key arguments explained:
 ## Panel batch path (recommended)
 
 ```bash
-while read -r gene; do
-  mkprobes candidates data/mouse --gene "$gene" --output panel_a/output
-  mkprobes screen panel_a/output "$gene" --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI
-  mkprobes construct data/mouse panel_a/output --gene "$gene" --codebook panel_a/codebook.json --target_probes 72 --restriction BamHI --restriction KpnI
-done < panel_a/genes.converted.txt
+mkprobes run-panel data/mouse panel_a/codebook.json
 ```
 
-**Intention:** apply exactly the same command trio to each target for deterministic panel assembly and easier shard-based HPC execution.
+`run-panel` applies the command trio to every target in the codebook across
+parallel workers (16 by default), with production settings
+(`--minimum 60 --maxoverlap 0 --restriction BamHI,KpnI --target-probes 48`,
+all overridable). Behavior:
+
+- finished targets (final parquet present) are skipped; `--overwrite` redoes them;
+- a `<codebook>.acceptable.json` allow-list (or `--allow-file`) is passed to
+  `candidates --allow` and forces a re-screen/re-construct for those genes;
+- failures are isolated per gene, logged to `output/<gene>.log`, collected in
+  `<codebook>.failed.txt`, and the command exits non-zero;
+- `mkprobes run-panel <dataset> <codebook> <gene>` re-runs one target (forced);
+- `--list-failed` / `--list-failed-all` triage targets without final outputs.
+
+**Intention:** apply exactly the same command trio to each target for
+consistent panel assembly and easier HPC execution — one command per panel.
 
 ## Output files
 

@@ -10,6 +10,8 @@ from .codebook.finalconstruct import click_construct, filter_genes
 from .ext.dataset import Dataset, create_dataset
 from .codebook.generate import make_codebook_cli
 from .ext.ingest import ingest
+from .assembly import cli as assemble
+from .run_panel import run_panel_cli
 from .genes.chkgenes import chkgenes, convert_to_transcripts, transcripts
 from .screen import screen
 from .utils._alignment import bowtie_build
@@ -80,6 +82,8 @@ main.add_command(click_construct)
 main.add_command(create_dataset)
 main.add_command(ingest)
 main.add_command(make_codebook_cli)
+main.add_command(run_panel_cli)
+main.add_command(assemble)
 
 
 if __name__ == "__main__":

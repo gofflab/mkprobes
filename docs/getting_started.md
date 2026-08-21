@@ -7,9 +7,9 @@ step validates the prerequisites of the next. Deep dives are linked per step.
 1. dataset    mkprobes prepare | ingest      reference (mouse/human) | any species
 2. targets    mkprobes chkgenes / convert-to-transcripts
 3. codebook   mkprobes make-codebook
-4. probes     mkprobes candidates -> screen -> construct   (per target)
+4. probes     mkprobes run-panel             candidates -> screen -> construct, all targets in parallel
 5. panel QC   mkprobes filter-genes
-6. assembly   scripts/probegen/2_assemble_manifest.py      -> orderable oligos
+6. assembly   mkprobes assemble              -> orderable oligos
 ```
 
 Before you start: installation complete ({doc}`installation`), `mkprobes --help`
@@ -68,20 +68,20 @@ capacity with blanks, and logs the codebook hash. Have expression data?
 Add `--expression <table>` to balance load across bits — optional.
 Details: {doc}`workflows/phase_2_codebook_design`.
 
-## 4. Design probes (per target)
+## 4. Design probes (all targets)
 
 ```bash
-while read -r gene; do
-  mkprobes candidates data/mouse --gene "$gene" --output panel_a/output
-  mkprobes screen panel_a/output "$gene" --minimum 60 --maxoverlap 20 --restriction BamHI,KpnI
-  mkprobes construct data/mouse panel_a/output --gene "$gene" \
-      --codebook panel_a/codebook.json --target_probes 72 \
-      --restriction BamHI --restriction KpnI
-done < panel_a/genes.converted.tss.txt
+mkprobes run-panel data/mouse panel_a/codebook.json
 ```
 
-`candidates` explores, `screen` removes poor/off-target options, `construct`
-encodes against the codebook. Details: {doc}`workflows/phase_3_candidate_screen_construct`.
+The codebook is the work list: every target runs
+`candidates -> screen -> construct` in parallel (16 workers by default),
+finished targets are skipped on re-runs, failures are isolated per gene and
+collected into `codebook.failed.txt`, and a `codebook.acceptable.json`
+allow-list (from off-target triage) is applied automatically. Re-run a single
+target with `mkprobes run-panel data/mouse panel_a/codebook.json <gene>`.
+Details and the underlying single-target commands:
+{doc}`workflows/phase_3_candidate_screen_construct`.
 
 ## 5. Panel QC
 
@@ -96,7 +96,7 @@ before assembly. Details: {doc}`workflows/phase_4_panel_qc_export`.
 ## 6. Assemble the orderable pool
 
 ```bash
-python scripts/probegen/2_assemble_manifest.py panel_a/manifest.json gen
+mkprobes assemble panel_a/manifest.json gen
 ```
 
 Emits the final oligo pool plus a provenance sidecar.

@@ -14,9 +14,9 @@ The workflow at a glance:
 1. dataset    mkprobes prepare | ingest      reference (mouse/human) | any species
 2. targets    mkprobes chkgenes / convert-to-transcripts
 3. codebook   mkprobes make-codebook
-4. probes     mkprobes candidates -> screen -> construct   (per target)
+4. probes     mkprobes run-panel             candidates -> screen -> construct, all targets in parallel
 5. panel QC   mkprobes filter-genes
-6. assembly   scripts/probegen/2_assemble_manifest.py      -> orderable oligos
+6. assembly   mkprobes assemble              -> orderable oligos
 ```
 
 New species? Start with the flagship runbook:

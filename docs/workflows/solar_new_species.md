@@ -23,10 +23,11 @@ dataset directory (dataset.json, transcripts.fasta, bowtie2 + k-mer indices)
         ▼
         │  mkprobes make-codebook   assign readout bits (optionally expression-informed)
         ▼
-per-target loop:  mkprobes candidates → screen → construct
+        │  mkprobes run-panel       candidates → screen → construct, all targets in parallel
+        ▼
         │  mkprobes filter-genes    panel QC
         ▼
-scripts/probegen/2_assemble_manifest.py gen   →  orderable oligo pool
+mkprobes assemble gen   →  orderable oligo pool
 ```
 
 ## 0. Prerequisites
@@ -174,13 +175,25 @@ parquet/csv/tsv on disk), add `--expression <name-or-path>` to balance
 total expression load across readout bits — without it, the plain seeded
 assignment is used. Details: [Phase 2](phase_2_codebook_design.md).
 
-## 4. Candidates → screen → construct
+## 4. Design probes for the whole panel
 
-Design probes per target (targets are transcript IDs for custom datasets):
+One command runs `candidates → screen → construct` for every target in the
+codebook, in parallel:
+
+```bash
+mkprobes run-panel data/ochierchiae codebook.json
+```
+
+Finished targets are skipped on re-runs; failures are isolated per gene
+(collected in `codebook.failed.txt` — triage with `--list-failed-all`); an
+off-target allow-list at `codebook.acceptable.json` is applied automatically.
+Re-run one target: `mkprobes run-panel data/ochierchiae codebook.json Och.687.1`.
+
+For debugging a single target step-by-step, the underlying commands are:
 
 ```bash
 mkprobes candidates data/ochierchiae -g Och.687.1 -o output/
-mkprobes screen output/ Och.687.1 --restriction BamHI,KpnI
+mkprobes screen output/ Och.687.1 --minimum 60 --maxoverlap 0 --restriction BamHI,KpnI
 mkprobes construct data/ochierchiae output/ -g Och.687.1 \
     -c codebook.json --restriction BamHI --restriction KpnI
 ```
@@ -196,17 +209,6 @@ Notes specific to custom datasets:
   "Most common binders" log table or `<target>_offtarget_counts.csv`.
 - The rRNA/tRNA blocklist is enforced automatically when the dataset has one
   (a single warning is printed when it doesn't).
-
-Batch loop:
-
-```bash
-while read -r t; do
-  mkprobes candidates data/ochierchiae -g "$t" -o output/
-  mkprobes screen output/ "$t" --restriction BamHI,KpnI
-  mkprobes construct data/ochierchiae output/ -g "$t" \
-      -c codebook.json --restriction BamHI --restriction KpnI
-done < genes.tss.txt
-```
 
 Octopus reference numbers (17.9 kb / 16.6 kb / 16.0 kb targets): 1,700–2,800
 candidates each → 57–73 screened pairs → 54–69 constructed probes.
@@ -243,9 +245,9 @@ Then assemble:
 
 ```bash
 # non-model species: either give RepeatMasker a supported taxon...
-python scripts/probegen/2_assemble_manifest.py manifest.json gen --rm-species mollusca
+mkprobes assemble manifest.json gen --rm-species mollusca
 # ...or skip it explicitly
-python scripts/probegen/2_assemble_manifest.py manifest.json gen --skip-repeatmasker
+mkprobes assemble manifest.json gen --skip-repeatmasker
 ```
 
 Outputs under `generated/`: `<name>.parquet`, `<name>_pad.fasta`,
@@ -255,9 +257,11 @@ version, codebook hash, probeset config, RepeatMasker status). Every pair is
 assert-checked for splint/padlock geometry and 139–150 nt padlock length
 during assembly.
 
-The interactive off-target triage (`2_assemble_manifest.py manifest.json
-short <N>`) reviews low-count genes and writes accepted off-targets to
-`<codebook>.acceptable.json`, which feeds back into step 3 via `--allow`.
+The interactive off-target triage (`mkprobes assemble manifest.json short <N>`)
+reviews low-count genes and writes accepted off-targets to
+`<codebook>.acceptable.json`, which `mkprobes run-panel` picks up
+automatically on the next run. Assembly output is deterministic: the same
+inputs always produce the same oligo pool.
 
 ## Troubleshooting quick hits
 

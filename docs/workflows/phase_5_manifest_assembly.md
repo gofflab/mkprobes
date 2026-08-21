@@ -2,7 +2,7 @@
 
 Phase 5 aggregates per-target final SOLAR (splint/padlock, STARmap-style) probe files and emits deliverables for ordering/downstream use.
 
-Assembly is driven by `scripts/probegen/2_assemble_manifest.py`, run from the repository checkout.
+Assembly is driven by `mkprobes assemble`. Output is deterministic: the same inputs always produce the same oligo pool.
 
 ## Inputs
 
@@ -14,7 +14,7 @@ Assembly is driven by `scripts/probegen/2_assemble_manifest.py`, run from the re
 ### Check short/underperforming targets
 
 ```bash
-python scripts/probegen/2_assemble_manifest.py panel_a/manifest.json short 12
+mkprobes assemble panel_a/manifest.json short 12
 ```
 
 This reports targets with fewer than threshold probes and may trigger interactive accept-list flow when off-target tables are available.
@@ -22,7 +22,7 @@ This reports targets with fewer than threshold probes and may trigger interactiv
 ### Generate final assembled outputs
 
 ```bash
-python scripts/probegen/2_assemble_manifest.py panel_a/manifest.json gen
+mkprobes assemble panel_a/manifest.json gen
 ```
 
 The header/footer table and MHD matrices are vendored inside the package (loaded via `importlib.resources`); pass `--headerfooter` to override the header/footer table.
