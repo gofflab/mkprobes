@@ -4,41 +4,69 @@ from pathlib import Path
 from typing import Literal
 
 import rich_click as click
+from loguru import logger
 
+from .assembly import cli as assemble
 from .candidates import candidates
 from .codebook.finalconstruct import click_construct, filter_genes
-from .ext.dataset import Dataset, create_dataset
 from .codebook.generate import make_codebook_cli
+from .ext.dataset import Dataset, create_dataset
 from .ext.ingest import ingest
-from .assembly import cli as assemble
-from .run_panel import run_panel_cli
 from .genes.chkgenes import chkgenes, convert_to_transcripts, transcripts
+from .run_panel import run_panel_cli
 from .screen import screen
 from .utils._alignment import bowtie_build
 from .utils.logging import setup_logging
 
-log = setup_logging()
+setup_logging()
 click.rich_click.SHOW_ARGUMENTS = True
 click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 click.rich_click.USE_MARKDOWN = True
 click.rich_click.STYLE_HELPTEXT = ""
 
 
-@click.group()
-def main():
-    r"""Combinatorial FISH Probe Design Utilities
-
-    Basic order of operations:
-
-    - Prepare database with:
-        > mkprobes prepare \<path\> [--species <species>]
-    - Initial crawling with:
-        > mkprobes candidates \<path\> \<gene\> \<output\> [--allow-pseudo] [--ignore-revcomp]
-    - Screening and tiling of said candidates with:
-        > mkprobes screen \<path from crawling\> \<gene\> [--fpkm-path <path>] [--overlap <int>]
-
+class FriendlyGroup(click.RichGroup):
     """
-    ...
+    Reports failures as one actionable line instead of a traceback.
+
+    Probe design runs for a long time and its users are biologists, not Python
+    developers; a wall of polars frames tells them nothing about what to fix.
+    The traceback is still one flag away, and always reaches the log file.
+    """
+
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except (click.ClickException, click.Abort, SystemExit):
+            raise
+        except Exception as exc:
+            if ctx.params.get("debug"):
+                raise
+            logger.opt(exception=exc).debug("Command failed")
+            raise click.ClickException(
+                f"{type(exc).__name__}: {exc}\n\nRe-run with --debug for the full traceback."
+            ) from exc
+
+
+@click.group(cls=FriendlyGroup)
+@click.option("--debug", is_flag=True, help="Show the full traceback when a command fails.")
+def main(debug: bool):
+    """Design SOLAR probe sets, from a reference to an orderable oligo pool.
+
+    The workflow is six steps, each one command:
+
+    1. **dataset** - `mkprobes prepare` (mouse/human) or `mkprobes ingest` (any species)
+    2. **targets** - `mkprobes chkgenes`, then `mkprobes convert-to-transcripts`
+    3. **codebook** - `mkprobes make-codebook`
+    4. **probes** - `mkprobes run-panel` (candidates, screen and construct for every target)
+    5. **panel QC** - `mkprobes filter-genes`
+    6. **assembly** - `mkprobes assemble`
+
+    Run any command with `--help` for its arguments. Full guide:
+    https://www.gofflab.org/mkprobes/
+    """
+    if debug:
+        setup_logging("DEBUG")
 
 
 # fmt: off

@@ -25,7 +25,6 @@ import pyfastx
 import questionary
 import rich
 import rich.rule
-import rich.traceback
 import rich_click as click
 from Bio import Seq
 from Bio.Restriction import BamHI, KpnI  # type: ignore
@@ -44,7 +43,6 @@ pl.Config.set_fmt_str_lengths(100)
 DEFAULT_HEADERFOOTER = Path(str(files("mkprobes") / "data" / "headerfooter.csv"))
 hfs = pl.read_csv(DEFAULT_HEADERFOOTER)
 console = rich.get_console()
-rich.traceback.install()
 species_mapping = {"mouse": "mus musculus", "human": "homo sapiens"}
 # %%
 

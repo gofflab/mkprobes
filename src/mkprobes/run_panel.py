@@ -41,12 +41,26 @@ def final_parquet(output: Path, gene: str, bits: list[int], restriction: tuple[s
 
 
 def load_worklist(codebook_path: Path) -> dict[str, list[int]]:
-    """Loads a codebook and returns the gene work list (Blank-* excluded)."""
-    codebook = json.loads(codebook_path.read_text())
-    codebook = {k: v for k, v in codebook.items() if not k.startswith("Blank")}
-    if len(set(codebook)) != len(codebook):
-        raise ValueError("Duplicated genes in codebook.")
-    return codebook
+    """
+    Loads a codebook and returns the gene work list (Blank-* excluded).
+
+    Duplicate keys are detected while the JSON is still a list of pairs: by the
+    time it is a dict, a repeated target has already silently taken the last
+    value, and every later stage would design against the wrong bits.
+    """
+
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        seen: set[str] = set()
+        duplicated = sorted({key for key, _ in pairs if key in seen or seen.add(key)})
+        if duplicated:
+            raise ValueError(
+                f"{codebook_path} lists {len(duplicated)} target(s) more than once: "
+                f"{', '.join(duplicated)}. Each target needs exactly one set of bits."
+            )
+        return dict(pairs)
+
+    codebook = json.loads(codebook_path.read_text(), object_pairs_hook=reject_duplicates)
+    return {k: v for k, v in codebook.items() if not k.startswith("Blank")}
 
 
 def load_acceptable(codebook_path: Path, allow_file: Path | None) -> dict[str, list[str]]:
@@ -131,7 +145,10 @@ def run_gene(
             overwrite=overwrite,
         )
     except Exception as e:
-        raise Exception(gene) from e
+        # Keep the cause in the message: the panel driver reports this line to a
+        # user who cannot see the worker's traceback, and "No probes left after
+        # filtering" is the actionable part, not the gene name.
+        raise RuntimeError(f"{gene}: {type(e).__name__}: {e}") from e
 
 
 def run_panel(
@@ -272,6 +289,8 @@ def run_panel_cli(
 
     Give an optional GENE to re-run just that target (forces overwrite for it).
     """
+    from .ext.ingest import DESIGN_TOOLS, check_external_tools
+
     output = output or codebook.parent / "output"
     enzymes = tuple(e.strip() for e in restriction.split(",") if e.strip())
 
@@ -284,6 +303,10 @@ def run_panel_cli(
                 if counts_path.exists():
                     click.echo(pl.read_csv(counts_path)[:5])
         return
+
+    # A missing aligner would otherwise surface as a raw subprocess error inside
+    # every worker process, minutes into the run.
+    check_external_tools(DESIGN_TOOLS)
 
     summary = run_panel(
         path,

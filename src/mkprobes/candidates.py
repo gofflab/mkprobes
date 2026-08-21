@@ -669,6 +669,10 @@ def candidates(
     pseudogene_limit: int = -1,
 ):
     """Initial screening of probes candidates for a gene."""
+    from .ext.ingest import DESIGN_TOOLS, check_external_tools
+
+    # Fail on a missing aligner now, not minutes into the alignment.
+    check_external_tools(DESIGN_TOOLS)
     allow_ = allow.split(",") if allow else None
     disallow_ = disallow.split(",") if disallow else None
     get_candidates(
