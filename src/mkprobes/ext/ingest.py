@@ -521,6 +521,7 @@ def write_intake_manifest(
     blocklist_files: list[str],
     annotation_tables: dict[str, str],
     argv: list[str],
+    gene_name_column: str | None = None,
 ) -> Path:
     """Writes solar_intake.yaml: auto-filled provenance + QC; operator completes the stubs."""
     manifest = {
@@ -534,6 +535,7 @@ def write_intake_manifest(
             "annotation_format": annotation_format,
             "blocklist_fasta": blocklist_files,
             "annotation_tables": annotation_tables,
+            "gene_name_column": gene_name_column,
         },
         "provenance": {
             "assembly_name": "",
@@ -651,6 +653,16 @@ def validate_dataset(ds: Dataset, gtf_transcript_ids: list[str]) -> None:
     "(e.g. 'rRNA,tRNA,snoRNA'). Requires a biotype attribute in the GTF.",
 )
 @click.option(
+    "--gene-name-column",
+    "gene_name_column",
+    type=str,
+    default=None,
+    metavar="COLUMN",
+    help="Column of a registered annotation table holding the gene names you want to write "
+    "in target lists, e.g. --gene-name-column Hsapiens_gene_name. Name lookup then uses only "
+    "that column. Cells holding a comma-separated list count as one name per entry.",
+)
+@click.option(
     "--annotation-table",
     "annotation_tables",
     multiple=True,
@@ -684,6 +696,7 @@ def ingest(
     trna_fasta: tuple[Path, ...],
     blocklist_biotypes: str | None,
     annotation_tables: tuple[str, ...],
+    gene_name_column: str | None,
     keep_genome: bool,
     fasta_key_regex: str,
     strip_version: bool,
@@ -786,6 +799,7 @@ def ingest(
             blocklist_fasta=blocklist_files or None,
             genome_fasta=plain_genome if keep_genome else None,
             annotations=tables or None,
+            gene_name_column=gene_name_column,
             interactive=False,
             overwrite=overwrite,
         )
@@ -810,6 +824,7 @@ def ingest(
             report=report,
             blocklist_files=[str(p) for p in blocklist_files],
             annotation_tables={k: str(v) for k, v in tables.items()},
+            gene_name_column=gene_name_column,
             argv=sys.argv,
         )
         console.print(

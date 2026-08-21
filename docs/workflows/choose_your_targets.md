@@ -22,7 +22,36 @@ Eomes
 
 For a reference dataset, use gene names. For a custom dataset, use whatever
 IDs its annotation actually carries — gene IDs, transcript IDs, or symbols
-resolvable through a registered ortholog table.
+resolvable through a registered annotation table.
+
+### Writing targets as gene names on a custom dataset
+
+De novo annotations usually have no gene names at all: `mkprobes ingest`
+reports `GENE_NAME_FALLBACK` and names fall back to IDs like `Och.958.1`,
+which nobody wants to write a panel in. If you have a table mapping those IDs
+to names — an ortholog assignment, a curated symbol list — register it and say
+which column holds the names you want to use:
+
+```bash
+mkprobes ingest data/myspecies --genome genome.fa --gtf annotation.gtf \
+    --species myspecies \
+    --annotation-table annot=my_annotation.tsv \
+    --gene-name-column Hsapiens_gene_name
+```
+
+Targets can then be written as those names, and `chkgenes` resolves them to
+transcript IDs. Two details worth knowing:
+
+- **Only that column is searched.** Without `--gene-name-column`, lookup scans
+  every text column of every registered table. That is fine on a small table
+  and slow on a wide one — and it will happily match a protein sequence or an
+  embedding column if something in it looks like your gene name.
+- **Comma-separated cells count as one name each.** Ortholog tables routinely
+  map one transcript to several symbols (`UBE2A,UBE2B`), so each entry is
+  matched separately rather than requiring the whole cell to match.
+
+The column must exist in one of the registered tables; ingest checks at build
+time and lists the available columns if it does not.
 
 Naming a target twice is a hard error, not a warning: the duplicate would
 claim a second set of readout bits and silently corrupt the codebook. Order is
