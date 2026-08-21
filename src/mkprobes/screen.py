@@ -181,9 +181,15 @@ def run_screen(
 
 
 @click.command()
-@click.argument("data_dir", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
+@click.argument("output_dir", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
 @click.argument("gene", type=str)
-@click.option("--fpkm_path", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path))
+@click.option(
+    "--fpkm-path",
+    "--fpkm_path",
+    "fpkm_path",
+    type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path),
+    help="Expression table used to relax off-target screening against lowly expressed transcripts.",
+)
 @click.option("--overlap", "-l", type=int, default=-2)
 @click.option(
     "--minimum",
@@ -203,7 +209,7 @@ def run_screen(
 )
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
 def screen(
-    data_dir: str,
+    output_dir: str,
     gene: str,
     fpkm_path: Path | str | None = None,
     overlap: int = -2,
@@ -212,7 +218,12 @@ def screen(
     restriction: str | None = None,
     overwrite: bool = False,
 ):
-    """Screening of probes candidates for a gene."""
+    """Filter and tile a target's candidate probes.
+
+    OUTPUT_DIR is the directory `mkprobes candidates` wrote to, not your
+    dataset: this reads `<gene>_crawled.parquet` from it and writes the
+    screened set back beside it.
+    """
     from .constants import validate_restriction
 
     enzymes = [e.strip() for e in restriction.split(",") if e.strip()] if restriction else None
@@ -222,7 +233,7 @@ def screen(
         raise click.BadParameter(str(e), param_hint="--restriction") from e
 
     run_screen(
-        data_dir,
+        output_dir,
         gene,
         fpkm_path=fpkm_path,
         overlap=overlap,
