@@ -13,11 +13,25 @@ from loguru import logger
 from ..candidates import _run_bowtie
 from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
 from ..starmap.starmap import rotate, test_splint_padlock
+from ..utils.provenance import provenance_metadata
+from ..utils.sequtils import reject_ambiguous_bases
 from ..utils.sequtils import reverse_complement as rc
 
 READOUTS: Final[dict[int, str]] = {
     x["id"]: x["seq"] for x in pl.read_csv(Path(__file__).parent / "readout_ref_filtered.csv").to_dicts()
 }
+
+
+def _check_pad_start(name: str, pad_start: int) -> None:
+    """
+    The padlock arm has to begin past position 17, or there is no room for the
+    readouts. Raised rather than asserted so `python -O` cannot strip it.
+    """
+    if pad_start <= 17:
+        raise ValueError(
+            f"Probe {name} has its padlock arm starting at {pad_start}, but readout "
+            "attachment needs it past 17. Re-run screening for this target."
+        )
 
 
 def assign_overlap(
@@ -59,15 +73,19 @@ def construct_idt(seq_encoding: pl.DataFrame, idxs: Sequence[int]):
             raise ValueError("Homopolymers")
 
         splint = s[0] + (footer := "ta" + rc(out_pad[:6]) + rc(out_pad[-6:]))
-        assert test_splint_padlock(footer[2:], out_pad), out_pad
-        assert 46 <= len(out_pad) <= 48, len(out_pad)
+        # Raised, not asserted: `python -O` would strip these and emit a padlock
+        # that cannot circularise.
+        if not test_splint_padlock(footer[2:], out_pad):
+            raise ValueError(f"Splint does not template the padlock's ends: {out_pad}")
+        if not 46 <= len(out_pad) <= 48:
+            raise ValueError(f"Padlock payload must be 46-48 nt, got {len(out_pad)}: {out_pad}")
         return splint, out_pad
 
     assert len(idxs) == 1
     out = dict(name=[], code=[], cons_pad=[], cons_splint=[], seq=[])
 
     for name, splint, pad, pad_start in seq_encoding[["name", "splint", "padlock", "pad_start"]].iter_rows():
-        assert pad_start > 17
+        _check_pad_start(name, pad_start)
 
         out["name"].append(name)  # f"{name};;{sep}{','.join(map(str,codes))}")
         out["code"].append(idxs[0])
@@ -99,7 +117,7 @@ def construct_encoding(
 
     for name, pad, pad_start in seq_encoding[["name", "padlock", "pad_start"]].iter_rows():
         # for codes, _ in zip(perms, range(4)):
-        assert pad_start > 17
+        _check_pad_start(name, pad_start)
         for sep, codes in zip(["AA", "TA", "AT", "TT"], perms):
             stitched = stitch(pad, codes, sep=sep)
             stitched_upper = stitched.upper()
@@ -142,10 +160,10 @@ def check_offtargets(dataset: Dataset, constructed: pl.DataFrame, acceptable_tss
 @click.command("construct")
 @click.argument("path", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
 @click.argument("output_path", type=click.Path(dir_okay=True, file_okay=False, path_type=Path))
-@click.option("--gene", "-g", type=str)
-@click.option("--codebook", "-c", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path))
-@click.option("--target_probes", "-N", type=int, help="Maximum number of probes per gene", default=72)
-@click.option("--restriction", multiple=True, type=str, help="Restriction enzymes to use")
+@click.option("--gene", "-g", type=str, required=True, help="Target transcript to build probes for.")
+@click.option("--codebook", "-c", required=True, type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path), help="Codebook JSON assigning readout bits to each target.")
+@click.option("--target-probes", "--target_probes", "-N", type=int, help="Maximum number of probes per gene", default=72, show_default=True)
+@click.option("--restriction", multiple=True, type=str, help="Restriction enzymes to exclude sites for. Repeatable.")
 # fmt: on
 def click_construct(
     path: Path,
@@ -155,6 +173,18 @@ def click_construct(
     target_probes: int = 72,
     restriction: list[str] | str | None = None,
 ):
+    """Attach readout sequences to screened probes for one target.
+
+    Reads that target's screened probes from OUTPUT_PATH and writes
+    `<target>_final_<enzymes>_<bits>.parquet` beside them.
+    """
+    from ..constants import validate_restriction
+
+    try:
+        validate_restriction(restriction)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--restriction") from e
+
     construct(
         load_dataset(path),
         output_path,
@@ -200,7 +230,7 @@ def construct(
     logger.debug(f"Using {scr_path} for {transcript}.")
     logger.debug(f"Screened probes: {len(screened)}")
 
-    assert not screened["seq"].str.contains("N").any()
+    reject_ambiguous_bases(screened, "screening")
     # acceptable_tss = pl.read_csv(next(output_path.glob(f"{transcript}_acceptable_tss.csv")))[
     #     "transcript_id"
     # ].to_list()
@@ -228,49 +258,97 @@ def construct(
     )
 
     logger.info(f"Constructed {len(res)} probes for {transcript}.")
-    assert res["seq"].is_not_null().all()
+    if res["seq"].is_null().any():
+        raise ValueError(
+            f"{res['seq'].is_null().sum()} constructed probe(s) for {transcript} have no "
+            "sequence. The screened input and the codebook disagree about this target."
+        )
 
     final_path.parent.mkdir(exist_ok=True, parents=True)
-    res.write_parquet(final_path)
+    res.write_parquet(
+        final_path,
+        metadata=provenance_metadata(
+            dataset.path,
+            stage="construct",
+            transcript=transcript,
+            bits=sorted(codebook[transcript]),
+            # `restriction` has already been folded into its filename form here.
+            restriction=restriction.lstrip("_") or None,
+            target_probes=target_probes,
+        ),
+    )
     # res.write_csv(final_path.with_suffix(".tsv"), separator="\t")  # deal with nested data
     logger.info(f"Written to {final_path}")
     return res
 
 
-@click.command()
-@click.argument("output_path", type=click.Path(dir_okay=True, file_okay=False, path_type=Path))
-@click.option("--genes", "-g", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path))
-@click.option("--min-probes", type=int, help="Minimum number of probes per gene", default=48)
+def count_final_probes(output_path: Path, gene: str) -> int | None:
+    """
+    Probes a target actually contributes to the pool, or `None` if it never
+    reached the construct stage.
+
+    Counts `_final_` rather than `_screened_` output: screening produces the
+    candidate pool, construct decides how many of those survive readout
+    attachment, and it is the latter that gets ordered.
+    """
+    finals = list(output_path.glob(f"{gene}_final_*.parquet"))
+    if not finals:
+        return None
+    # One target can have several, if it was rebuilt under different enzymes or
+    # bit assignments. The newest is the one the current panel refers to.
+    newest = max(finals, key=lambda path: path.stat().st_mtime)
+    return len(pl.read_parquet(newest))
+
+
+@click.command("filter-genes")
+@click.argument("output_path", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
+@click.option(
+    "--genes",
+    "-g",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path),
+    help="Target list to check, one per line.",
+)
+@click.option(
+    "--min-probes", type=int, help="Minimum number of probes per target", default=48, show_default=True
+)
 @click.option(
     "--out",
     "-o",
     type=click.Path(dir_okay=False, file_okay=True, path_type=Path),
-    help="Export filtered gene list",
+    help="Write the targets that pass to this file, one per line.",
 )
 def filter_genes(output_path: Path, genes: Path, min_probes: int, out: Path | None = None):
-    def get_probes(gene: str):
-        # Screened files are named {gene}_screened_ol{overlap}[_{enzymes}].parquet;
-        # overlap may be negative (default -2). Read the file with the highest
-        # overlap directly (never reconstruct the name - it may carry an
-        # enzyme suffix).
-        ols = [
-            (int(m.group(1)), f)
-            for f in output_path.glob(f"{gene}_screened_ol*.parquet")
-            if (m := re.search(r"_ol(-?\d+)", f.stem))
-        ]
-        if ols:
-            return pl.read_parquet(max(ols)[1])
-        return pl.read_parquet(output_path / f"{gene}_screened.parquet")
+    """Report how many probes each target ended up with, and flag the thin ones.
 
-    gene_list = genes.read_text().splitlines()
-    ns: dict[str, int] = {}
+    Counts probes in each target's `_final_` output - what the target would
+    contribute to an oligo order. Targets below --min-probes are warned about
+    individually; rework or drop them before assembly.
+    """
+    gene_list = [line.strip() for line in genes.read_text().splitlines() if line.strip()]
+    counts: dict[str, int] = {}
+    missing: list[str] = []
+
     for gene in gene_list:
-        if len(screened := get_probes(gene)) < min_probes:
-            logger.warning(f"{gene} has {len(screened)} probes, less than {min_probes}.")
-        ns[gene] = len(screened)
+        count = count_final_probes(output_path, gene)
+        if count is None:
+            missing.append(gene)
+            continue
+        if count < min_probes:
+            logger.warning(f"{gene} has {count} probes, less than {min_probes}.")
+        counts[gene] = count
 
+    if missing:
+        logger.error(
+            f"{len(missing)} target(s) have no constructed probes in {output_path}: "
+            f"{', '.join(missing[:10])}{' ...' if len(missing) > 10 else ''}. "
+            "Run `mkprobes run-panel` first, or check its `.failed.txt`."
+        )
+
+    passed = [gene for gene, n in counts.items() if n >= min_probes]
+    logger.info(f"{len(passed)}/{len(gene_list)} target(s) have at least {min_probes} probes.")
     if out:
-        out.write_text("\n".join(gene for gene, n in ns.items() if n >= min_probes))
+        out.write_text("\n".join(passed) + "\n" if passed else "")
 
 
 # readouts = pl.read_csv("data/readout_ref_filtered.csv")

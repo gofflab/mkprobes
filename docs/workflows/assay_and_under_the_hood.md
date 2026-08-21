@@ -47,7 +47,7 @@ Internal logic:
    - hairpin threshold
 3. Reject homopolymer-heavy sequences.
 4. Split candidate into assay-facing components (`splint`/`padlock` style split) using target Tm logic.
-5. Align generated sequences against reference index (Bowtie-based path) to estimate off-target behavior.
+5. Align generated sequences against the reference index with **bowtie2** to estimate off-target behavior.
 6. Compute per-sequence quality features (GC, hairpin, Tm, homopolymer-derived flags, etc.).
 
 Design intention:
@@ -82,7 +82,8 @@ Implementation anchors:
 
 Internal logic:
 
-1. Optionally remove candidates containing specified restriction enzyme sites.
+1. Remove candidates containing a restriction site. The enzyme pair is fixed by
+   SOLAR chemistry to BamHI + KpnI; `--restriction` refuses any other pair.
 2. Apply tiered filtering criteria (strict to progressively relaxed thresholds).
 3. Use overlap-aware selection (`find_overlap` / weighted variant) to choose a non-redundant probe set with coverage.
 4. Reshape selected split components into paired records and write screened parquet outputs.
@@ -117,8 +118,10 @@ Implementation anchors:
 
 Internal logic:
 
-1. Count available screened probes per target.
-2. Flag targets below threshold.
+1. Count each target's **constructed** (`_final_`) probes — what it would
+   contribute to an oligo order, not the larger screened count.
+2. Warn per target below threshold, and report separately any target with no
+   constructed output at all (a `run-panel` failure rather than a thin panel).
 3. Optionally output a pass-list for downstream panel release.
 
 Design intention:

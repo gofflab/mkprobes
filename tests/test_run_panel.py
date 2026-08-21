@@ -54,11 +54,20 @@ class TestWorklist:
         assert set(wl) == {"Och.687.1", "Och.958.1"}
 
     def test_duplicates_rejected(self, tmp_path: Path):
+        # json.loads keeps the last value for a repeated key, so a duplicated
+        # target would silently design against the wrong bits. Detection has to
+        # happen while the document is still a list of pairs.
         p = tmp_path / "dup.json"
-        p.write_text('{"A": [1,2,3], "A ": [4,5,6]}'.replace("A ", "A"))  # JSON dedups silently
-        # Real duplicate detection happens on the parsed dict; simulate via loader contract:
-        wl = load_worklist(p)
-        assert list(wl) == ["A"]
+        p.write_text('{"A": [1,2,3], "A": [4,5,6], "B": [7,8,9]}')
+
+        with pytest.raises(ValueError, match="more than once: A"):
+            load_worklist(p)
+
+    def test_distinct_targets_accepted(self, tmp_path: Path):
+        p = tmp_path / "ok.json"
+        p.write_text('{"A": [1,2,3], "B": [4,5,6]}')
+
+        assert load_worklist(p) == {"A": [1, 2, 3], "B": [4, 5, 6]}
 
     def test_final_parquet_naming(self, tmp_path: Path):
         p = final_parquet(tmp_path, "Och.687.1", [3, 1, 2], ("BamHI", "KpnI"))

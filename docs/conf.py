@@ -13,43 +13,24 @@ author = "Goff Lab"
 copyright = f"{datetime.now():%Y}, {author}"
 release = "0.1.0"
 
+# `sphinx_click.ext` renders reference/cli.md straight from the Click tree, so
+# the CLI reference cannot drift from the code. It imports `mkprobes.cli` for
+# real, which means the docs build must install the package and its
+# dependencies - see docs/requirements.txt and .github/workflows/docs.yml.
+#
+# There is deliberately no autodoc/autosummary here: no page documents the
+# Python API, and an autodoc stack configured with mocked-out imports fails in
+# confusing ways the moment someone adds one. Add them back together with the
+# page that needs them.
 extensions = [
     "myst_parser",
-    "sphinx.ext.autodoc",
-    "sphinx.ext.autosummary",
-    "sphinx.ext.napoleon",
-    "sphinx.ext.viewcode",
+    "sphinx_click.ext",
 ]
 
-autosummary_generate = True
-autodoc_typehints = "description"
-autodoc_member_order = "bysource"
-
-# Keep docs buildable in lean environments and CI where scientific deps are absent.
-autodoc_mock_imports = [
-    "anndata",
-    "Bio",
-    "matplotlib",
-    "mygene",
-    "numpy",
-    "pandas",
-    "polars",
-    "primer3",
-    "pyarrow",
-    "pyfastx",
-    "pydantic",
-    "questionary",
-    "requests",
-    "rich",
-    "rich_click",
-    "click",
-    "loguru",
-    "scipy",
-    "seaborn",
-    "sklearn",
-    "tqdm",
-    "yaml",
-]
+# Off because these pages are full of command-line flags: smartquotes rewrites
+# a `--flag` mentioned in running text (including inside generated CLI help)
+# into an en-dash, which is wrong and uncopyable.
+smartquotes = False
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]

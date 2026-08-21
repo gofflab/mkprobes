@@ -29,6 +29,7 @@ import rich_click as click
 from loguru import logger
 
 from ..ext.dataset import Dataset, _read_annotation_table, load_dataset
+from ..utils.targets import read_target_list
 from .codebook import CodebookPicker, bit_count, hash_codebook, n_to_bit
 
 # MHD code matrices are vendored inside the package; any matrix not vendored
@@ -303,9 +304,10 @@ def make_codebook_cli(
     seed: int,
 ):
     """Generate a codebook for a target list, optionally expression-informed."""
-    targets = [g for g in genes.read_text().split() if g]
-    if len(targets) != len(set(targets)):
-        raise click.ClickException("Duplicate targets in the gene list.")
+    try:
+        targets = read_target_list(genes)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
 
     expression = None
     if expression_spec is not None:

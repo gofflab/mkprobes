@@ -170,4 +170,14 @@ class TestMakeCodebookCli:
         genes_file.write_text("A\nA\n")
         res = CliRunner().invoke(make_codebook_cli, [str(tmp_path), str(genes_file)])
         assert res.exit_code != 0
-        assert "Duplicate" in res.output
+        # Naming the offending target is the point; a bare "duplicate" is not
+        # actionable on a list of several hundred.
+        assert "A" in res.output
+
+    def test_comments_and_blank_lines_are_ignored(self, tmp_path: Path):
+        genes_file = tmp_path / "genes.txt"
+        genes_file.write_text("# my panel\nA\n\nB  # keep\n\n")
+        out = tmp_path / "cb.json"
+        res = CliRunner().invoke(make_codebook_cli, [str(tmp_path), str(genes_file), "-o", str(out)])
+        assert res.exit_code == 0, res.output
+        assert set(json.loads(out.read_text())) >= {"A", "B"}

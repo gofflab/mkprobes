@@ -129,9 +129,12 @@ def test_construct_idt_successful_case(
 def test_construct_idt_invalid_pad_start(
     mock_finalconstruct_dependencies: None, sample_seq_encoding_idt: pl.DataFrame, pad_start_val: int
 ) -> None:
-    """Test construct_idt raises AssertionError for pad_start <= 17."""
+    """A padlock arm starting at or before 17 leaves no room for readouts.
+
+    Raised rather than asserted, so it survives `python -O`.
+    """
     sample_seq_encoding_idt = sample_seq_encoding_idt.with_columns(pl.lit(pad_start_val).alias("pad_start"))
-    with pytest.raises(AssertionError):  # Removed match argument
+    with pytest.raises(ValueError, match="past 17"):
         construct_idt(sample_seq_encoding_idt, [1])
 
 

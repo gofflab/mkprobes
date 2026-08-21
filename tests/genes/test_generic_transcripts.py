@@ -100,6 +100,11 @@ class TestCandidatesCliWiring:
         with (
             patch.object(cand_mod, "load_dataset", return_value=sentinel) as mock_load,
             patch.object(cand_mod, "get_candidates") as mock_get,
+            # `candidates` pre-flights bowtie2 before doing any work. This test
+            # is about wiring and mocks the work away, so it must not also
+            # require the aligner to be installed. The pre-flight itself is
+            # covered in tests/test_cli_errors.py.
+            patch("mkprobes.ext.ingest.check_external_tools"),
         ):
             res = CliRunner().invoke(
                 cand_mod.candidates,

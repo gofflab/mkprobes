@@ -4,8 +4,21 @@
 
 `mkprobes` is the combinatorial FISH probe-design toolkit used to build **SOLAR**
 probesets (splint/padlock, STARmap-style). It provides a CLI covering the full
-workflow: reference/dataset preparation, per-target candidate generation,
-off-target screening, probe construction against a codebook, and panel QC.
+workflow, from a reference to an orderable oligo pool:
+
+```text
+0. project    mkprobes init                  scaffold a project
+1. dataset    mkprobes prepare | ingest      reference (mouse/human) | any species
+2. targets    mkprobes chkgenes / convert-to-transcripts
+3. codebook   mkprobes make-codebook
+4. probes     mkprobes run-panel             candidates -> screen -> construct, all targets
+5. panel QC   mkprobes filter-genes
+6. assembly   mkprobes assemble              -> orderable oligos
+```
+
+Start with [Getting started](https://www.gofflab.org/mkprobes/getting_started.html),
+which walks through all of it. `mkprobes --help` prints the same order, and
+every command takes `--help`.
 
 ## Provenance
 

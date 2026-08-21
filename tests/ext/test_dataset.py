@@ -341,6 +341,66 @@ class TestLoadDataset:
         with pytest.raises(FileNotFoundError, match="mkprobes ingest.*create-dataset"):
             load_dataset(tmp_path / "squid")
 
+    def test_dataset_json_over_reference_build_is_ambiguous(self, tmp_path: Path):
+        # The silent-downgrade case: a dataset.json dropped into a downloaded
+        # reference build used to win, quietly losing pseudogene screening.
+        from mkprobes.ext.dataset import load_dataset
+
+        ref_dir = tmp_path / "mouse"
+        ref_dir.mkdir()
+        (ref_dir / "gencode.gtf.gz").write_bytes(b"")
+        (ref_dir / "dataset.json").write_text(json.dumps({"species": "mouse", "external_data": {}}))
+
+        with pytest.raises(ValueError, match="ambiguous"):
+            load_dataset(ref_dir)
+
+    def test_custom_reference_species_dataset_warns(self, tmp_path: Path):
+        # A custom mouse dataset is still allowed, but must not be silent about
+        # using the reduced path.
+        from loguru import logger
+
+        from mkprobes.ext.dataset import load_dataset
+
+        ds_dir = tmp_path / "my_mouse"
+        ds_dir.mkdir()
+        (ds_dir / "dataset.json").write_text(
+            json.dumps({
+                "species": "mouse",
+                "external_data": {
+                    "default": {
+                        "fasta_name": "t.fa",
+                        "bowtie2_index_name": "t",
+                        "kmer18_name": "t.jf",
+                    }
+                },
+            })
+        )
+        (ds_dir / "t.jf").write_text("AGCTAGCTAGCTAGCTAG 2\n")
+
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, level="WARNING")
+        try:
+            with patch("mkprobes.ext.dataset.ExternalData.from_definition") as mock_from_def:
+                mock_ed = MagicMock(spec=ExternalData)
+                mock_ed.kmer = "t.jf"
+                mock_from_def.return_value = mock_ed
+                ds = load_dataset(ds_dir)
+        finally:
+            logger.remove(sink_id)
+
+        assert type(ds) is Dataset
+        assert any("no pseudogene screening" in m for m in messages), messages
+
+    def test_reference_build_in_misnamed_folder_explains_rename(self, tmp_path: Path):
+        from mkprobes.ext.dataset import load_dataset
+
+        ref_dir = tmp_path / "mm39"
+        ref_dir.mkdir()
+        (ref_dir / "gencode.gtf.gz").write_bytes(b"")
+
+        with pytest.raises(ValueError, match="must be exactly `human` or `mouse`"):
+            load_dataset(ref_dir)
+
 
 class TestFromComponentsGtfAndBlocklist:
     def _run(

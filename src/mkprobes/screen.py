@@ -11,8 +11,9 @@ from Bio.Seq import Seq
 from loguru import logger
 
 from .utils._filtration import the_filter, visualize_probe_coverage
+from .utils.provenance import encode, provenance_record
 from .utils.samframe import SAMFrame
-from .utils.sequtils import probe_identity_exprs
+from .utils.sequtils import probe_identity_exprs, reject_ambiguous_bases
 
 sys.setrecursionlimit(5000)
 
@@ -46,7 +47,7 @@ def _screen(
         logger.info(f"Filtered {initial_len - len(ff)} probes with restriction sites.")
 
     final, stats_filter = the_filter(ff, overlap=overlap)
-    assert not final["seq"].str.contains("N").any(), "N appears out of nowhere."
+    reject_ambiguous_bases(final, "screening")
 
     final = final.with_columns(probe_identity_exprs())
     final = (
@@ -68,12 +69,21 @@ def _screen(
         .rename({"full_name": "name"})
     )
 
+    prov = provenance_record(
+        stage="screen",
+        gene=gene,
+        overlap=overlap,
+        restriction=list(restriction) if restriction else None,
+        fpkm_path=str(fpkm_path) if fpkm_path else None,
+    )
     final.write_parquet(
         write_path := output_dir
-        / f"{gene}_screened_ol{overlap}{'_' + ''.join(restriction) if restriction else ''}.parquet"
+        / f"{gene}_screened_ol{overlap}{'_' + ''.join(restriction) if restriction else ''}.parquet",
+        metadata=encode(prov),
     )
 
     stats = {
+        "provenance": prov,
         "input": len(ff),
         "filtering": stats_filter,
         "final": len(final),
@@ -171,9 +181,15 @@ def run_screen(
 
 
 @click.command()
-@click.argument("data_dir", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
+@click.argument("output_path", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
 @click.argument("gene", type=str)
-@click.option("--fpkm_path", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path))
+@click.option(
+    "--fpkm-path",
+    "--fpkm_path",
+    "fpkm_path",
+    type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path),
+    help="Expression table used to relax off-target screening against lowly expressed transcripts.",
+)
 @click.option("--overlap", "-l", type=int, default=-2)
 @click.option(
     "--minimum",
@@ -185,10 +201,15 @@ def run_screen(
 @click.option(
     "--maxoverlap", type=int, default=20, help="Maximum sequence overlap between probes if minimum is set."
 )
-@click.option("--restriction", type=str, help="Restriction enzymes to filter probes by.")
+@click.option(
+    "--restriction",
+    type=str,
+    help="Comma-separated enzymes whose sites probes must avoid. "
+    "SOLAR chemistry fixes this to BamHI,KpnI.",
+)
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
 def screen(
-    data_dir: str,
+    output_path: str,
     gene: str,
     fpkm_path: Path | str | None = None,
     overlap: int = -2,
@@ -197,14 +218,27 @@ def screen(
     restriction: str | None = None,
     overwrite: bool = False,
 ):
-    """Screening of probes candidates for a gene."""
+    """Filter and tile a target's candidate probes.
+
+    OUTPUT_PATH is the directory `mkprobes candidates` wrote to, not your
+    dataset: this reads `<gene>_crawled.parquet` from it and writes the
+    screened set back beside it.
+    """
+    from .constants import validate_restriction
+
+    enzymes = [e.strip() for e in restriction.split(",") if e.strip()] if restriction else None
+    try:
+        validate_restriction(enzymes)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--restriction") from e
+
     run_screen(
-        data_dir,
+        output_path,
         gene,
         fpkm_path=fpkm_path,
         overlap=overlap,
         minimum=minimum,
         maxoverlap=maxoverlap,
-        restriction=restriction.split(",") if restriction else None,
+        restriction=enzymes,
         overwrite=overwrite,
     )

@@ -11,6 +11,23 @@ from matplotlib.axes import Axes
 
 name_splitter = re.compile(r"(.+)_(.+):(\d+)-(\d+)")
 
+
+def reject_ambiguous_bases(frame: pl.DataFrame, stage: str, column: str = "seq") -> None:
+    """
+    Raises if any sequence in `column` contains an ambiguous base.
+
+    An N that reaches synthesis is a defect, not a warning, so this raises
+    rather than asserts: `python -O` strips asserts and would ship the oligo.
+    """
+    offending = frame.filter(pl.col(column).str.contains("N"))
+    if not len(offending):
+        return
+    raise ValueError(
+        f"{len(offending)} sequence(s) contain an ambiguous base (N) after {stage}. "
+        "The reference usually has masked or unresolved regions in this transcript. "
+        f"First offender: {offending[column][0]}"
+    )
+
 # Probe names are structured `{gene}_{transcript}:{start}-{end}` with an
 # optional `_{splint|padlock}` suffix appended at the melt step. De novo IDs
 # may themselves contain underscores (TRINITY_DN123_c0_g1_i1) and dots

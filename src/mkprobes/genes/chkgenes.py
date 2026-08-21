@@ -1,6 +1,5 @@
 import difflib
 import json
-import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -14,6 +13,7 @@ from loguru import logger
 from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
 from ..ext.external_data import MockGTF, get_ensembl
 from ..utils.printing import jprint
+from ..utils.targets import read_target_list
 
 GENERIC_MODES = ("longest", "all")
 REFERENCE_MODES = ("gencode", "ensembl", "canonical", "appris", "apprisalt")
@@ -50,21 +50,10 @@ def chkgenes(path: Path, genes: Path):
 
     ds = load_dataset(path)
     del path
-    gs: list[str] = re.split(r"[\s,]+", genes.read_text())
-    if not gs:
-        raise ValueError("No genes provided")
-
-    gs = list(filter(lambda x: x, gs))
+    gs = read_target_list(genes)
     for gene in gs:
         if not gene.isascii():
             raise ValueError(f"{gene} not ASCII.")
-
-    if len(gs) != len(s := set(gs)):
-        [gs.remove(x) for x in s]
-        logger.critical(f"Non-unique genes found: {', '.join(gs)}.\n")
-        genes.with_suffix(".unique.txt").write_text("\n".join(sorted(list(s))))
-        logger.error(f"Unique genes written to {genes.with_suffix('.unique.txt')}.\n")
-        return
 
     if not isinstance(ds, ReferenceDataset):
         # Offline check against the dataset's own annotation (plus registered
@@ -92,7 +81,7 @@ def chkgenes(path: Path, genes: Path):
     elif not no_fix_needed:
         logger.warning("Some genes cannot be found.")
     else:
-        logger.info(f"{len(s)} genes checked out. No changes needed")
+        logger.info(f"{len(gs)} genes checked out. No changes needed")
         genes.with_suffix(".converted.txt").write_text("\n".join(sorted(converted)))
 
 
@@ -336,8 +325,7 @@ def convert_to_transcripts(
     """Convert gene names to transcript IDs (canonical for reference datasets; longest/all otherwise)"""
     ds = load_dataset(path)
     del path
-    gene_names = genes.read_text().splitlines()
-    assert len(gene_names) == len(set(gene_names))
+    gene_names = read_target_list(genes)
     res = get_transcripts(ds, gene_names, mode=mode)
 
     if mode != "all":
@@ -375,7 +363,7 @@ def transcripts(
     """Get transcript ID from gene name or gene ID"""
 
     if genefile:
-        genes = genefile.read_text().splitlines()
+        genes = read_target_list(genefile)
     elif gene:
         genes = [gene]
     else:

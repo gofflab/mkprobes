@@ -42,12 +42,17 @@ from .external_data import ExternalData
 
 EXTERNAL_TOOLS: dict[str, str] = {
     "gffread": "conda install -c bioconda gffread",
+    "bowtie2": "conda install -c bioconda bowtie2",
     "bowtie2-build": "conda install -c bioconda bowtie2",
     "jellyfish": "conda install -c bioconda kmer-jellyfish",
 }
 
+#: Tools probe design needs, as opposed to dataset construction.
+DESIGN_TOOLS: tuple[str, ...] = ("bowtie2",)
+
 _TOOL_VERSION_ARGS: dict[str, list[str]] = {
     "gffread": ["--version"],
+    "bowtie2": ["--version"],
     "bowtie2-build": ["--version"],
     "jellyfish": ["--version"],
 }

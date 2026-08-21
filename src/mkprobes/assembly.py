@@ -13,11 +13,10 @@ CLI: ``mkprobes assemble <manifest.json> {short|gen}``.
 
 import json
 import subprocess
-import zlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from importlib.metadata import version as pkg_version
 from importlib.resources import files
+from itertools import cycle, islice
 from pathlib import Path
 
 import numpy as np
@@ -26,16 +25,16 @@ import pyfastx
 import questionary
 import rich
 import rich.rule
-import rich.traceback
 import rich_click as click
 from Bio import Seq
 from Bio.Restriction import BamHI, KpnI  # type: ignore
 from loguru import logger
-from pydantic import TypeAdapter
 
 from .codebook.codebook import ProbeSet
+from .constants import RESTRICTION_TOKEN
 from .starmap.starmap import generate_head_splint, test_splint_padlock
 from .utils._alignment import gen_fasta
+from .utils.provenance import encode, provenance_record, read_provenance
 from .utils.sequtils import reverse_complement as rc
 
 pl.Config.set_fmt_str_lengths(100)
@@ -44,7 +43,6 @@ pl.Config.set_fmt_str_lengths(100)
 DEFAULT_HEADERFOOTER = Path(str(files("mkprobes") / "data" / "headerfooter.csv"))
 hfs = pl.read_csv(DEFAULT_HEADERFOOTER)
 console = rich.get_console()
-rich.traceback.install()
 species_mapping = {"mouse": "mus musculus", "human": "homo sapiens"}
 # %%
 
@@ -68,14 +66,6 @@ def backfill(seq: str, target: int = 148):
     )
 
 
-def _head_splint(padlock: str) -> str:
-    # Per-row RNG seeded from the padlock itself: the original shared
-    # seeded generator was consumed in polars' evaluation order, which is
-    # not stable across runs (chunk-parallel UDF execution), making the
-    # 3-nt head splint - and thus the oligo pool - nondeterministic.
-    return generate_head_splint(padlock, np.random.default_rng(zlib.crc32(padlock.encode())))
-
-
 def run(
     path: Path,
     probeset: ProbeSet,
@@ -85,6 +75,7 @@ def run(
     rm_species: str | None = None,
     skip_repeatmasker: bool = False,
 ):
+    rand = np.random.default_rng(0)
     idx = probeset.bcidx
     codebook = probeset.load_codebook(path)
     logger.info(f"Loaded {probeset.codebook} with {len(codebook)} genes.")
@@ -95,11 +86,12 @@ def run(
     bads = []
     lows = []
 
+    design_source: Path | None = None
+
     for ts in tss:
         try:
-            df = pl.read_parquet(
-                path / f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
-            ).sort(
+            final = path / f"output/{ts}_final_{RESTRICTION_TOKEN}_{','.join(map(str, sorted(codebook[ts])))}.parquet"
+            df = pl.read_parquet(final).sort(
                 [
                     pl.col("priority").list.max(),
                     pl.col("hp").list.min(),
@@ -124,6 +116,7 @@ def run(
 
         if not cols:
             cols = df.columns
+            design_source = final
 
         if df["gene"].dtype == pl.List:
             df = df.with_columns(gene=pl.col("gene").list.get(0))
@@ -187,13 +180,21 @@ def run(
 
     # This is padlock.
     logger.info("Generating splint header.")
+    # `rand` and the `it` cycle below are shared across rows, so the order in
+    # which they are consumed decides the sequence each row gets. polars runs
+    # `map_elements` across threads, so drawing from them inside the UDF is not
+    # reproducible - repeated runs of the same panel emitted different oligos.
+    # Drawing here, in row order, reproduces exactly what the original single-
+    # threaded run produced, at any thread count.
     res = dfs.with_columns(
+        _head_splint=pl.Series(
+            [generate_head_splint(padlock, rand) for padlock in dfs["padlock"]], dtype=pl.Utf8
+        )
+    ).with_columns(
         pad_cut=(
             # head
             hfs[pad_idx, "header"][-3:]
-            + pl.col("padlock")
-            .map_elements(_head_splint, return_dtype=pl.Utf8)
-            .str.to_lowercase()
+            + pl.col("_head_splint").str.to_lowercase()
             + "ta"  # what the paper uses
             + pl.col("seq").map_elements(rc, return_dtype=pl.Utf8)
         ).map_elements(padpad, return_dtype=pl.Utf8)
@@ -202,26 +203,28 @@ def run(
         + hfs[pad_idx, "footer"][:3]
     )
 
+    it = cycle("ATAAT")
+
     def splint_pad(seq: str, target: int = 47):
-        # Per-row filler from a fresh "ATAAT" repeat: the original drew from a
-        # shared cycling iterator whose consumption order followed polars'
-        # (unstable) evaluation order, making the padding nondeterministic.
         if len(seq) > target:
             return seq
-        need = target - len(seq)
-        return ("ATAAT" * (need // 5 + 1))[:need] + seq
+        return "".join(islice(it, target - len(seq))) + seq
 
     # Splint
+    res = res.with_columns(
+        _spl_unpadded=(
+            # "TGTTGATGAGGTGTTGATGAATA"
+            pl.col("splint").map_elements(rc, return_dtype=pl.Utf8)
+            + "ca"
+            + pl.col("pad_cut").str.slice(0, 6).map_elements(rc, return_dtype=pl.Utf8)
+            + pl.col("pad_cut").str.slice(-6, 6).map_elements(rc, return_dtype=pl.Utf8)
+        )
+    )
     res = (
         res.with_columns(
-            spl_cut=(
-                # "TGTTGATGAGGTGTTGATGAATA"
-                pl.col("splint").map_elements(rc, return_dtype=pl.Utf8)
-                + "ca"
-                + pl.col("pad_cut").str.slice(0, 6).map_elements(rc, return_dtype=pl.Utf8)
-                + pl.col("pad_cut").str.slice(-6, 6).map_elements(rc, return_dtype=pl.Utf8)
-            ).map_elements(splint_pad, return_dtype=pl.Utf8)
-        )
+            # Padded in row order, for the reason given above the head splint.
+            spl_cut=pl.Series([splint_pad(s) for s in res["_spl_unpadded"]], dtype=pl.Utf8)
+        ).drop("_head_splint", "_spl_unpadded")
     ).filter(
         (
             pl.col("spl_cut")
@@ -252,8 +255,14 @@ def run(
     def double_digest(s: str) -> str:
         return BamHI.catalyze(KpnI.catalyze(Seq.Seq(s))[1])[0].__str__()
 
+    # These guard the molecule that gets synthesized, so they are raised rather
+    # than asserted: `python -O` would strip an assert and ship the bad oligo.
     for s, r in zip(res["spl_cut"], res["pad_cut"]):
-        assert test_splint_padlock(s, r, lengths=(6, 6)), (s, r)
+        if not test_splint_padlock(s, r, lengths=(6, 6)):
+            raise ValueError(
+                "Splint does not template the padlock's ends (6 nt each side), so the "
+                f"padlock could not be circularised.\n  splint:  {s}\n  padlock: {r}"
+            )
 
     out: pl.DataFrame = res.with_columns(
         # restriction scar already accounted for
@@ -262,12 +271,37 @@ def run(
     ).with_columns(splintcons=pl.col("splintcons").map_elements(backfill, return_dtype=pl.Utf8))
 
     for s, r in zip(out["splintcons"], out["padlockcons"]):
-        assert test_splint_padlock(*map(double_digest, (s, r)), lengths=(6, 6)), (s, r)
+        if not test_splint_padlock(*map(double_digest, (s, r)), lengths=(6, 6)):
+            raise ValueError(
+                "After the KpnI/BamHI double digest the splint no longer templates the "
+                f"padlock's ends.\n  splint:  {s}\n  padlock: {r}"
+            )
 
-    assert (out["padlockcons"].str.len_chars().is_between(139, 150)).all()
+    lengths = out["padlockcons"].str.len_chars()
+    if not lengths.is_between(139, 150).all():
+        raise ValueError(
+            f"Padlock oligos must be 139-150 nt to synthesize; got "
+            f"{lengths.min()}-{lengths.max()} nt. The header/footer table and the "
+            "probe length have to agree - check --headerfooter."
+        )
+
+    from .codebook.codebook import hash_codebook
+
+    # Carry the design parameters forward from a per-gene construct output, so the
+    # ordered pool records the thresholds it was built under and not just its own.
+    design = read_provenance(design_source) if design_source else None
+    record = provenance_record(
+        stage="assemble",
+        probeset=probeset.model_dump(),
+        codebook_hash=hash_codebook(codebook),
+        n_probe_pairs=len(out),
+        repeatmasker=rm_taxon or "skipped",
+        headerfooter=str(DEFAULT_HEADERFOOTER),
+        design=design,
+    )
 
     (gen_path := path / "generated").mkdir(exist_ok=True, parents=True)
-    out.write_parquet(gen_path / (probeset.name + ".parquet"))
+    out.write_parquet(gen_path / (probeset.name + ".parquet"), metadata=encode(record))
     logger.info(f"{len(out)} probe pairs written to {gen_path / (probeset.name + '.parquet')}")
 
     (gen_path / (probeset.name + "_pad.fasta")).write_text(
@@ -277,21 +311,8 @@ def run(
         gen_fasta(out["splintcons"], names=range(len(out))).getvalue()
     )
 
-    from .codebook.codebook import hash_codebook
-
     (gen_path / (probeset.name + ".provenance.json")).write_text(
-        json.dumps(
-            {
-                "generated_at": datetime.now().isoformat(),
-                "mkprobes_version": pkg_version("mkprobes"),
-                "probeset": probeset.model_dump(),
-                "codebook_hash": hash_codebook(codebook),
-                "n_probe_pairs": len(out),
-                "repeatmasker": rm_taxon or "skipped",
-                "headerfooter": str(DEFAULT_HEADERFOOTER),
-            },
-            indent=2,
-        )
+        json.dumps(record, indent=2, default=str) + "\n"
     )
     return out
 
@@ -307,12 +328,25 @@ def run(
 )
 @click.pass_context
 def cli(ctx: click.Context, manifest: Path, headerfooter: Path | None):
+    """Turn designed probes into an orderable oligo pool.
+
+    MANIFEST is a JSON list of probe sets, each naming a codebook and the
+    header/footer row to build against. Use `gen` to assemble the pool, or
+    `short` first to triage targets that came up thin.
+    """
+    from .init_project import check_manifest
+
     ctx.ensure_object(dict)
     if headerfooter is not None:
         global hfs
         hfs = pl.read_csv(headerfooter)
         logger.info(f"Using header/footer table {headerfooter}.")
-    mfs = TypeAdapter(list[ProbeSet]).validate_json(Path(manifest).read_text())
+    # Validated here rather than deep in `gen`: an out-of-range bcidx or a
+    # missing codebook used to surface only after the pool had been built.
+    try:
+        mfs = check_manifest(manifest)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
     ctx.obj["manifest"] = mfs
     ctx.obj["path"] = manifest.parent
 
@@ -406,7 +440,7 @@ def short(
         for ts in tss:
             try:
                 _df = pl.read_parquet(
-                    path / f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
+                    path / f"output/{ts}_final_{RESTRICTION_TOKEN}_{','.join(map(str, sorted(codebook[ts])))}.parquet"
                 )
                 _df = _df.sort([pl.col("priority").list.min(), pl.col("hp").list.max()])
                 dfs_.append(
@@ -464,7 +498,7 @@ def short(
                 baddies.append(ts)
                 logger.warning(
                     "File "
-                    + f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
+                    + f"output/{ts}_final_{RESTRICTION_TOKEN}_{','.join(map(str, sorted(codebook[ts])))}.parquet"
                     + " not found. This usually means that there are no probes for this gene."
                 )
                 manual_accept(path, probeset, ts=ts)

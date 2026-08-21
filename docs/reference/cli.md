@@ -1,60 +1,93 @@
 # CLI reference
 
-This page summarizes the `mkprobes` command surface and where each command fits. The package lives in its own repository ([github.com/gofflab/mkprobes](https://github.com/gofflab/mkprobes)); run commands with `mkprobes ...` from the repo root.
+Every command, every flag, generated directly from the code at build time.
+Nothing on this page can drift out of date; if a flag is here, it exists.
 
-For an end-to-end walkthrough on a non-model species, see {doc}`../workflows/solar_new_species`.
+This is a lookup table, not a tutorial. If you are designing a panel for the
+first time, read {doc}`../getting_started` instead — it puts these commands in
+order and explains what each one is for.
 
-## `mkprobes` command group
+## The order to run them in
 
-### Dataset preparation
+| Step | Command | How-to |
+| --- | --- | --- |
+| 0. project | `init` | {doc}`../getting_started` |
+| 1. dataset | `prepare` (mouse/human), `ingest` or `create-dataset` (any species) | {doc}`../workflows/build_a_dataset` |
+| 2. targets | `chkgenes`, then `convert-to-transcripts` | {doc}`../workflows/choose_your_targets` |
+| 3. codebook | `make-codebook` | {doc}`../workflows/design_the_codebook` |
+| 4. probes | `run-panel` (wraps `candidates`, `screen`, `construct`) | {doc}`../workflows/design_probes` |
+| 5. panel QC | `filter-genes` | {doc}`../workflows/qc_your_panel` |
+| 6. assembly | `check-manifest`, then `assemble short` / `assemble gen` | {doc}`../workflows/order_your_oligos` |
 
-- `mkprobes prepare PATH --species {human,mouse} --threads N`
-  - downloads and indexes the curated human/mouse reference.
-- `mkprobes ingest PATH --genome GENOME.fa --gtf ANNOTATION.gtf --species NAME [options]`
-  - builds a dataset for any species from a genome FASTA + GTF/GFF3.
-  - options: `--extract {transcripts,cds}`, `--rrna-fasta`, `--trna-fasta`, `--blocklist-biotypes`, `--annotation-table NAME=PATH`, `--keep-genome`, `--fasta-key-regex`, `--strip-version/--no-strip-version` (default: no strip), `--validate-only`, `--overwrite`.
-- `mkprobes create-dataset PATH --fasta FASTA --species NAME [options]`
-  - builds a dataset directly from a transcriptome FASTA.
-  - options: `--gtf`, `--blocklist-fasta`, `--fasta-key-regex`, `--strip-version/--no-strip-version` (default: strip), `--annotation NAME=PATH`, `--overwrite`.
+Supporting commands, usable at any point: `provenance` (how was this file
+made?), `hash` (codebook identity), `transcripts` (one-off transcript lookup).
 
-### Target selection
+## Things worth knowing before you read the list
 
-- `mkprobes chkgenes PATH genes.txt`
-  - validate/normalize gene names against the dataset.
-- `mkprobes transcripts PATH --gene GENE [--canonical|--gencode|--ensembl|--appris|--longest|--all]`
-  - `--longest`/`--all` are the offline modes for custom datasets; `--canonical` falls back to `--longest` on custom datasets. Ensembl/mygene/APPRIS modes are reference-only (human/mouse).
-- `mkprobes convert-to-transcripts PATH genes.txt --mode MODE`
-  - `-m/--mode` accepts `canonical`, `gencode`, `ensembl`, `appris`, `apprisalt`, `longest`, `all`.
+**`--debug` goes before the command name.** It is an option on `mkprobes`
+itself, not on individual commands, so it is `mkprobes --debug run-panel ...`,
+never `mkprobes run-panel --debug`. Without it, a failure is reported as one
+actionable line; with it, you get the full Python traceback.
 
-### Codebook generation
+**`--restriction` is not a free choice.** It appears on `screen`, `construct`
+and `run-panel`, but SOLAR chemistry fixes the pair to **BamHI + KpnI**. The
+header/footer sequences carry those two sites and final assembly excises the
+probe with a KpnI/BamHI double digest, so any other pair yields probes that
+nothing downstream can cut out. Anything else is refused up front, with an
+explanation. In practice: leave the option alone.
 
-- `mkprobes make-codebook PATH genes.tss.txt [options]`
-  - generates a codebook JSON from an MHD code (auto-sized to the target count, `Blank-N` decoys fill spare capacity; round-confounder codewords are swapped onto blanks).
-  - `--expression NAME_OR_PATH` (**optional**): balance total expression load across readout bits by trying `--iterations` assignments and keeping the highest-entropy one. Accepts the name of an annotation table registered in the dataset or a parquet/csv/tsv path (needs a `transcript_id`/`gene_id` column; `--expression-column` disambiguates the value column). Without it, assignment is a plain seeded shuffle (`--seed`).
-  - `--existing-codebook prev.json` extends a previous panel with non-overlapping bits; `--n-bits`/`--offset` for manual control.
+The spelling does differ between commands, which is worth knowing when you
+copy a command line around:
 
-### Probe generation
+- `screen` and `run-panel` take one comma-separated value: `--restriction BamHI,KpnI`
+- `construct` takes a repeatable option: `--restriction BamHI --restriction KpnI`
 
-- `mkprobes run-panel PATH CODEBOOK [GENE] [options]`
-  - the batch driver: designs probes for every target in the codebook (`candidates -> screen -> construct`) across parallel workers; skips finished targets, applies `<codebook>.acceptable.json` (or `--allow-file`), records failures in `<codebook>.failed.txt`, and exits non-zero if any gene fails. `--list-failed`/`--list-failed-all` triage missing outputs. Production defaults: `--minimum 60 --maxoverlap 0 --restriction BamHI,KpnI --target-probes 48`.
-- `mkprobes candidates PATH --gene GENE --output output/ [options]`
-- `mkprobes screen DATA_DIR GENE [--minimum M] [--overlap L] [--maxoverlap L] [--restriction ...] [--overwrite]`
-- `mkprobes construct PATH OUTPUT_PATH --gene GENE --codebook CODEBOOK.json [options]`
-
-### Panel QC and provenance
-
-- `mkprobes filter-genes OUTPUT_PATH --genes genes.txt --min-probes N [--out out.txt]`
-- `mkprobes hash CODEBOOK.json`
-
-## Manifest assembly
-
-Manifest assembly and final export (see {doc}`../workflows/phase_5_manifest_assembly`):
+**`assemble` takes its manifest before the subcommand.** The manifest is an
+argument on the group, because `gen` and `short` share it:
 
 ```bash
-mkprobes assemble manifest.json short 12     # triage under-provisioned genes (interactive off-target accept)
-mkprobes assemble manifest.json gen          # assemble the orderable oligo pool (deterministic)
+mkprobes assemble panel_a/manifest.json gen      # correct
+mkprobes assemble gen panel_a/manifest.json      # wrong
 ```
 
-`gen` accepts `--rm-species '<taxon>'` / `--skip-repeatmasker` for non-model species and `--headerfooter` to override the vendored table.
+The same applies to `--headerfooter`, which belongs to the `assemble` group
+rather than to `gen`. A consequence: `mkprobes assemble ... gen --help` still
+has to parse and validate the manifest first, so it needs a real one.
 
-The remaining files under `scripts/probegen/` are deprecated shims (`o_codebook.py` -> `mkprobes make-codebook`; `1_run_codebook*.py` -> `mkprobes run-panel`; `2_assemble_manifest.py` -> `mkprobes assemble`) plus exploratory notebooks (`simulate.py` in-silico validation, `foridt.py`/`adt.py` IDT-ordering examples whose logic already lives in the package).
+**Which dataset a command loads is inferred from the directory.** Reference
+datasets (`prepare`) and custom ones (`ingest` / `create-dataset`) are screened
+differently, and the difference is not cosmetic. See
+[Which kind of dataset a command loads](file_formats.md#which-kind-of-dataset-a-command-loads).
+
+**Target lists tolerate comments.** Anywhere a command takes a `GENES` file,
+blank lines are skipped and everything after a `#` is a comment, so you can
+record why a target is in the panel. Listing a target twice is an error.
+
+**Every parquet output records how it was made.** `mkprobes provenance <file>`
+prints the version, timestamp, command line, dataset and parameters embedded
+in any output parquet. The `.stats.json` sidecars carry the same record under
+a `provenance` key, and `assemble` writes a `<panel>.provenance.json` beside
+the pool.
+
+## Commands
+
+```{eval-rst}
+.. click:: mkprobes.cli:main
+   :prog: mkprobes
+   :nested: full
+```
+
+## Deprecated script shims
+
+The files under `scripts/probegen/` predate the package and are kept only as
+shims:
+
+| Script | Replaced by |
+| --- | --- |
+| `o_codebook.py` | `mkprobes make-codebook` |
+| `1_run_codebook*.py` | `mkprobes run-panel` |
+| `2_assemble_manifest.py` | `mkprobes assemble` |
+
+The rest of that directory is exploratory notebooks: `simulate.py` (in-silico
+validation) and `foridt.py` / `adt.py` (IDT ordering examples whose logic
+already lives in the package).

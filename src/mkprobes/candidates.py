@@ -15,8 +15,10 @@ from .starmap.starmap import split_probe
 from .utils._alignment import gen_fasta
 from .utils._crawler import crawler
 from .utils._filtration import PROBE_CRITERIA, visualize_probe_coverage
+from .utils.provenance import encode, provenance_metadata, provenance_record
 from .utils.samframe import SAMFrame
 from .utils.seqcalc import hp, tm
+from .utils.sequtils import reject_ambiguous_bases
 
 try:
     profile  # type: ignore
@@ -316,8 +318,11 @@ def _run_transcript(
         y, offtargets = _run_bowtie(dataset, crawled, ignore_revcomp=ignore_revcomp)
         y = y.join(crawled[["name", "seq_full", "pad_start"]], on="name")
 
-        y.write_parquet(output / f"{transcript_name}_all.parquet")
-        offtargets.write_parquet(output / f"{transcript_name}_bowtie.parquet")
+        alignment_prov = provenance_metadata(
+            dataset.path, stage="align", transcript=transcript_name, ignore_revcomp=ignore_revcomp
+        )
+        y.write_parquet(output / f"{transcript_name}_all.parquet", metadata=alignment_prov)
+        offtargets.write_parquet(output / f"{transcript_name}_bowtie.parquet", metadata=alignment_prov)
         stats = {
             "seq_length": len(seq),
             "crawled_length": len(crawled),
@@ -426,13 +431,21 @@ def _run_transcript(
 
     logger.info(f"Generated {len(ff)} candidates.")
 
-    assert not ff["seq"].str.contains("N").any()
+    reject_ambiguous_bases(ff, "candidate generation")
+    prov = provenance_record(
+        dataset.path,
+        stage="candidates",
+        transcript=transcript_name,
+        species=dataset.species,
+        ignore_revcomp=ignore_revcomp,
+    )
     stats |= {
+        "provenance": prov,
         "allow": list(tss_allacceptable),
         "offtargets": offtargets.to_dicts(),
         "post_match_filter": len(ff),
     }
-    ff.write_parquet(output / f"{transcript_name}_crawled.parquet")
+    ff.write_parquet(output / f"{transcript_name}_crawled.parquet", metadata=encode(prov))
     output.joinpath(f"{transcript_name}_crawled.stats.json").write_text(json.dumps(stats, indent=2))
     return ff
 
@@ -522,8 +535,11 @@ def _run_transcript_generic(
             maps_to_pseudo=pl.lit("")
         )
 
-        y.write_parquet(output / f"{transcript}_all.parquet")
-        offtargets.write_parquet(output / f"{transcript}_bowtie.parquet")
+        alignment_prov = provenance_metadata(
+            dataset.path, stage="align", transcript=transcript, ignore_revcomp=ignore_revcomp
+        )
+        y.write_parquet(output / f"{transcript}_all.parquet", metadata=alignment_prov)
+        offtargets.write_parquet(output / f"{transcript}_bowtie.parquet", metadata=alignment_prov)
         stats = {
             "seq_length": len(seq),
             "crawled_length": len(crawled),
@@ -601,14 +617,22 @@ def _run_transcript_generic(
 
     logger.info(f"Generated {len(ff)} candidates.")
 
-    assert not ff["seq"].str.contains("N").any()
+    reject_ambiguous_bases(ff, "candidate generation")
+    prov = provenance_record(
+        dataset.path,
+        stage="candidates",
+        transcript=transcript,
+        species=dataset.species,
+        ignore_revcomp=ignore_revcomp,
+    )
     stats |= {
+        "provenance": prov,
         "allow": list(tss_allacceptable),
         "offtargets": offtargets.to_dicts(),
         "post_match_filter": len(ff),
     }
 
-    ff.write_parquet(output / f"{transcript}_crawled.parquet")
+    ff.write_parquet(output / f"{transcript}_crawled.parquet", metadata=encode(prov))
     output.joinpath(f"{transcript}_crawled.stats.json").write_text(json.dumps(stats, indent=2))
     return ff, stats
 
@@ -646,6 +670,10 @@ def candidates(
     pseudogene_limit: int = -1,
 ):
     """Initial screening of probes candidates for a gene."""
+    from .ext.ingest import DESIGN_TOOLS, check_external_tools
+
+    # Fail on a missing aligner now, not minutes into the alignment.
+    check_external_tools(DESIGN_TOOLS)
     allow_ = allow.split(",") if allow else None
     disallow_ = disallow.split(",") if disallow else None
     get_candidates(

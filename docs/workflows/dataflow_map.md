@@ -1,48 +1,81 @@
-# Probe-design dataflow map
+# Dataflow map
 
-This page gives a compact, execution-oriented map of inputs and outputs through the `mkprobes` CLI workflow for SOLAR (splint/padlock, STARmap-style) probesets.
+A compact map of what goes into each step and what comes out. Use it to work
+out where a missing file should have come from.
 
-## Phase-by-phase input/output map
+The steps themselves are in {doc}`../getting_started`.
 
-| Phase | Primary command(s) | Required inputs | Primary outputs | Purpose |
-|---|---|---|---|---|
-| 1. Dataset prep | `mkprobes prepare`, `mkprobes ingest`, or `mkprobes create-dataset` | species/ref selection, genome + GTF/GFF3, or FASTA | indexed dataset folder (`txome`, `cdna18.jf`, etc.) | define sequence universe + search indices |
-| 2. Targets + codebook | `mkprobes chkgenes`, `mkprobes convert-to-transcripts`, `mkprobes make-codebook` | target list (+ optional expression table) | transcript-resolved target list + codebook JSON + hash | lock panel identity, naming, and encoding |
-| 3A. Candidate gen | `mkprobes run-panel` (batch) or `mkprobes candidates` | dataset path, target, output path | `*_all.parquet`, `*_bowtie.parquet`, `*_crawled.parquet` | broad candidate search + alignment annotation |
-| 3B. Screening | `mkprobes screen` | candidate files + target | `*_screened_ol*.parquet` (+ stats) | filter and overlap-select high-quality probes |
-| 3C. Construction | `mkprobes construct` | screened files + codebook | `*_final_*.parquet` | emit final encoded probe constructs |
-| 4. Panel QC | `mkprobes filter-genes` | output path + target list | pass-list text output | enforce panel-level minimum probe count |
-| 5. Manifest assembly | `mkprobes assemble` | manifest.json + final parquet files | assembled parquet/FASTA, `<panel>_final.txt`, provenance JSON | export orderable oligo pool |
+## Step by step
 
-## Key file names to watch
+| Step | Command(s) | Takes | Produces |
+| --- | --- | --- | --- |
+| 0. project | `init` | a directory name | `genes.txt`, `manifest.json`, `README.md` |
+| 1. dataset | `prepare`, `ingest`, or `create-dataset` | species choice, or genome + GTF, or a FASTA | indexed dataset directory (bowtie2 index, `.jf` k-mer files, annotation) |
+| 2. targets | `chkgenes`, then `convert-to-transcripts` | target list + dataset | `genes.converted.txt`, then `genes.converted.tss.txt` |
+| 3. codebook | `make-codebook` | transcript list (+ optional expression table) | `codebook.json` + a logged hash |
+| 4. probes | `run-panel` (or `candidates`, `screen`, `construct`) | dataset + codebook | per-target parquet chain, ending in `_final_` |
+| 5. panel QC | `filter-genes` | output directory + target list | `genes.pass.txt`, warnings per thin target |
+| 6. assembly | `check-manifest`, then `assemble short` / `assemble gen` | `manifest.json` + `_final_` parquet files | `generated/`: pool, FASTAs, provenance |
 
-Per target `T`:
+## Filenames chain from their inputs
 
-1. `output/T_crawled.parquet`
-2. `output/T_screened_ol*.parquet`
-3. `output/T_final_<restriction>_<bits>.parquet`
+This is the part that trips people up: most commands name their output after
+their input rather than using a fixed name.
+
+```text
+genes.txt
+  --chkgenes-->                genes.converted.txt
+  --convert-to-transcripts-->  genes.converted.tss.txt
+  --make-codebook-->           genes.converted.tss.codebook.json   (unless you pass -o)
+```
+
+Pass `-o codebook.json` to `make-codebook` to break that chain, which is what
+{doc}`../getting_started` and the `mkprobes init` template both do.
+
+Per target `T`, inside `output/`:
+
+```text
+T_all.parquet          every candidate position
+T_bowtie.parquet       raw alignments
+T_crawled.parquet      candidates + off-target context   (+ T_crawled.stats.json)
+T_screened_ol<N>.parquet   selected probe pairs          (+ .stats.json)
+T_final_BamHIKpnI_<bits>.parquet   encoded constructs
+```
+
+`_final_` is the one that counts as a result: `filter-genes` counts it, and
+`assemble` reads it. The `<bits>` in the name come from the codebook, and
+`BamHIKpnI` is fixed by the assay chemistry.
+
+Decoding these filenames in full — including why the `ol` number is a gap and
+not an overlap — is in {doc}`../reference/columns`.
 
 Panel-level:
 
-1. `panel_a/codebook.json`
-2. `panel_a/genes.converted.txt`
-3. `panel_a/genes.pass.txt` (from `filter-genes`)
+```text
+codebook.json               from make-codebook
+codebook.failed.txt         targets run-panel could not finish
+codebook.acceptable.json    off-targets you accepted during `assemble short`
+genes.pass.txt              from filter-genes
+generated/<name>_final.txt  the orderable pool
+```
 
-## Recommended run checkpoints
+## Checkpoints
 
-1. After phase 1: dataset index files exist and are readable.
-2. After phase 2: codebook validation passes and hash recorded.
-3. During phase 3: per-target final parquet appears for every target.
-4. After phase 4: pass-list reaches project threshold.
-5. After phase 5: assembled outputs and `<panel>.provenance.json` written under `generated/`.
+1. **After step 1** — the dataset's index and `.jf` files exist and are readable.
+2. **After step 2** — `genes.converted.tss.txt` has one line per target you expected.
+3. **After step 3** — the codebook covers exactly your target list; hash recorded.
+4. **During step 4** — a `_final_` parquet appears per target; `codebook.failed.txt` is empty.
+5. **After step 5** — the pass list is as long as your panel.
+6. **After step 6** — `generated/` holds the pool and `<panel>.provenance.json`.
 
-## Common breakpoints and immediate checks
+## If a file is missing
 
-1. Missing `*_crawled.parquet`:
-   - check `candidates` command args and dataset path.
-2. Missing `*_screened_ol*.parquet`:
-   - inspect `screen` constraints (`--minimum`, overlap, restriction filters).
-3. Missing `*_final_*.parquet`:
-   - verify target exists in codebook and screened inputs exist.
-4. Low pass rate in `filter-genes`:
-   - rerun selected targets with tuned screening parameters.
+| Missing | Look at |
+| --- | --- |
+| `*_crawled.parquet` | the `candidates` step — dataset path and target name |
+| `*_screened_ol*.parquet` | `screen` constraints: `--minimum`, `--maxoverlap` |
+| `*_final_*.parquet` | the target is in the codebook, and screened input exists |
+| many targets in `codebook.failed.txt` | `run-panel --list-failed-all` for the off-target picture |
+| everything, after a re-run | outputs are skipped when present; use `--overwrite` |
+
+Any output parquet will tell you how it was made: `mkprobes provenance <file>`.
