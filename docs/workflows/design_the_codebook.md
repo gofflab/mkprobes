@@ -119,6 +119,17 @@ To print the hash of any codebook directly:
 mkprobes hash panel_a/codebook.json
 ```
 
+If a codebook predates the sidecar — made before mkprobes wrote one — backfill
+it from the codebook you already have:
+
+```bash
+mkprobes hash panel_a/codebook.json --write
+```
+
+That writes `codebook.hash` and leaves the codebook untouched. **Do not re-run
+`make-codebook` to get a sidecar**: it would assign different bits, and probes
+already designed would no longer match their own codebook.
+
 :::{note}
 The hash covers the codebook as written, Blank codes included. Re-serialising
 it — different indentation, different key order — does not change it, because
