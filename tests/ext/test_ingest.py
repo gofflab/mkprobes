@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from conftest import flatten_cli_output
 import yaml
 from click.testing import CliRunner
 
@@ -411,3 +412,70 @@ class TestUnstrandedTranscripts:
 
         assert report.n_unstranded_transcripts == 0
         assert not [i for i in report.issues if i.code == "STRAND_MISSING"]
+
+
+class TestOverwriteGuard:
+    """
+    `--validate-only` writes annotation.gtf into the dataset directory. Guarding
+    the real ingest on that file made the documented flow - validate, then
+    ingest - fail on its own leftovers, so the guard is on dataset.json, the
+    marker that a build actually completed.
+    """
+
+    def _inputs(self, tmp_path: Path) -> tuple[Path, Path]:
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\n" + "ACGT" * 500 + "\n")
+        gtf = tmp_path / "in.gtf"
+        gtf.write_text(
+            'chr1\tt\ttranscript\t100\t200\t.\t+\t.\tgene_id "g0"; transcript_id "t0";\n'
+            'chr1\tt\texon\t100\t200\t.\t+\t.\tgene_id "g0"; transcript_id "t0";\n'
+        )
+        return genome, gtf
+
+    def _run(self, runner: CliRunner, dataset_dir: Path, genome: Path, gtf: Path, *extra: str):
+        from mkprobes import cli
+
+        return runner.invoke(
+            cli.main,
+            ["ingest", str(dataset_dir), "--genome", str(genome), "--gtf", str(gtf),
+             "--species", "test", *extra],
+        )
+
+    def test_validate_only_leftovers_do_not_block_a_real_ingest(self, tmp_path: Path):
+        runner = CliRunner()
+        genome, gtf = self._inputs(tmp_path)
+        dataset_dir = tmp_path / "ds"
+
+        first = self._run(runner, dataset_dir, genome, gtf, "--validate-only")
+        assert first.exit_code == 0, first.output
+        assert (dataset_dir / "annotation.gtf").exists()  # the leftover in question
+
+        second = self._run(runner, dataset_dir, genome, gtf)
+
+        # It may still fail later for want of external tools; what it must not
+        # do is refuse up front because validation ran.
+        assert "already holds a built dataset" not in flatten_cli_output(second.output)
+
+    def test_a_built_dataset_is_still_protected(self, tmp_path: Path):
+        runner = CliRunner()
+        genome, gtf = self._inputs(tmp_path)
+        dataset_dir = tmp_path / "ds"
+        dataset_dir.mkdir()
+        (dataset_dir / "dataset.json").write_text("{}")
+
+        result = self._run(runner, dataset_dir, genome, gtf)
+
+        assert result.exit_code != 0
+        assert "already holds a built dataset" in flatten_cli_output(result.output)
+        assert "--overwrite" in flatten_cli_output(result.output)
+
+    def test_overwrite_bypasses_the_guard(self, tmp_path: Path):
+        runner = CliRunner()
+        genome, gtf = self._inputs(tmp_path)
+        dataset_dir = tmp_path / "ds"
+        dataset_dir.mkdir()
+        (dataset_dir / "dataset.json").write_text("{}")
+
+        result = self._run(runner, dataset_dir, genome, gtf, "--overwrite", "--validate-only")
+
+        assert "already holds a built dataset" not in flatten_cli_output(result.output)

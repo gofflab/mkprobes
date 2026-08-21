@@ -33,9 +33,13 @@ class TestFriendlyErrors:
         result = runner.invoke(cli.main, ["hash", str(bad)])
 
         assert result.exit_code != 0
-        assert "JSONDecodeError" in flatten_cli_output(result.output)
-        assert "--debug" in flatten_cli_output(result.output)
-        assert "Traceback" not in flatten_cli_output(result.output)
+        flat = flatten_cli_output(result.output)
+        assert "JSONDecodeError" in flat
+        assert "Traceback" not in flat
+        # --debug is a group option, so the hint has to name the whole
+        # invocation: appending it to the subcommand fails with "No such option".
+        assert "mkprobes --debug hash" in flat
+        assert "before the command name" in flat
 
     def test_debug_flag_reraises(self, runner: CliRunner, tmp_path: Path):
         bad = tmp_path / "codebook.json"

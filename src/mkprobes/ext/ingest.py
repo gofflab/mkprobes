@@ -709,10 +709,16 @@ def ingest(
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Materialize a plain-text GTF (converts GFF3, decompresses .gz).
+    #
+    # The guard is on `dataset.json`, the marker a build completed, not on the
+    # annotation copy. `--validate-only` also writes annotation.gtf, so guarding
+    # on that made the documented flow - validate, then ingest - fail on its own
+    # leftovers.
     dest_gtf = dataset_dir / "annotation.gtf"
-    if dest_gtf.exists() and not overwrite and annotation.resolve() != dest_gtf.resolve():
+    built_marker = dataset_dir / "dataset.json"
+    if built_marker.exists() and not overwrite and annotation.resolve() != dest_gtf.resolve():
         raise click.ClickException(
-            f"{dest_gtf} already exists. Pass --overwrite to replace the existing dataset."
+            f"{dataset_dir} already holds a built dataset. Pass --overwrite to replace it."
         )
     annotation_format = normalize_annotation(annotation, dest_gtf)
 
