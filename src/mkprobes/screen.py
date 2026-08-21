@@ -11,6 +11,7 @@ from Bio.Seq import Seq
 from loguru import logger
 
 from .utils._filtration import the_filter, visualize_probe_coverage
+from .utils.provenance import encode, provenance_record
 from .utils.samframe import SAMFrame
 from .utils.sequtils import probe_identity_exprs
 
@@ -68,12 +69,21 @@ def _screen(
         .rename({"full_name": "name"})
     )
 
+    prov = provenance_record(
+        stage="screen",
+        gene=gene,
+        overlap=overlap,
+        restriction=list(restriction) if restriction else None,
+        fpkm_path=str(fpkm_path) if fpkm_path else None,
+    )
     final.write_parquet(
         write_path := output_dir
-        / f"{gene}_screened_ol{overlap}{'_' + ''.join(restriction) if restriction else ''}.parquet"
+        / f"{gene}_screened_ol{overlap}{'_' + ''.join(restriction) if restriction else ''}.parquet",
+        metadata=encode(prov),
     )
 
     stats = {
+        "provenance": prov,
         "input": len(ff),
         "filtering": stats_filter,
         "final": len(final),

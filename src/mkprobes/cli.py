@@ -72,6 +72,22 @@ def hash(path: Path):
     print(hash_codebook(json.loads(path.read_text())))
 
 
+@main.command()
+@click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def provenance(path: Path):
+    """Show how an output file was made: version, parameters, and dataset."""
+    from .utils.provenance import read_provenance
+
+    record = read_provenance(path)
+    if record is None:
+        raise click.ClickException(
+            f"{path} carries no provenance. Files written before mkprobes recorded it, "
+            "and files not written by mkprobes, have none. Re-run the step that produced "
+            "it to stamp a fresh copy."
+        )
+    click.echo(json.dumps(record, indent=2, sort_keys=True))
+
+
 main.add_command(candidates)
 main.add_command(screen)
 main.add_command(chkgenes)

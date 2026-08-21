@@ -15,7 +15,6 @@ import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from importlib.metadata import version as pkg_version
 from importlib.resources import files
 from itertools import cycle, islice
 from pathlib import Path
@@ -36,6 +35,7 @@ from pydantic import TypeAdapter
 from .codebook.codebook import ProbeSet
 from .starmap.starmap import generate_head_splint, test_splint_padlock
 from .utils._alignment import gen_fasta
+from .utils.provenance import encode, provenance_record, read_provenance
 from .utils.sequtils import reverse_complement as rc
 
 pl.Config.set_fmt_str_lengths(100)
@@ -88,11 +88,12 @@ def run(
     bads = []
     lows = []
 
+    design_source: Path | None = None
+
     for ts in tss:
         try:
-            df = pl.read_parquet(
-                path / f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
-            ).sort(
+            final = path / f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
+            df = pl.read_parquet(final).sort(
                 [
                     pl.col("priority").list.max(),
                     pl.col("hp").list.min(),
@@ -117,6 +118,7 @@ def run(
 
         if not cols:
             cols = df.columns
+            design_source = final
 
         if df["gene"].dtype == pl.List:
             df = df.with_columns(gene=pl.col("gene").list.get(0))
@@ -269,8 +271,23 @@ def run(
 
     assert (out["padlockcons"].str.len_chars().is_between(139, 150)).all()
 
+    from .codebook.codebook import hash_codebook
+
+    # Carry the design parameters forward from a per-gene construct output, so the
+    # ordered pool records the thresholds it was built under and not just its own.
+    design = read_provenance(design_source) if design_source else None
+    record = provenance_record(
+        stage="assemble",
+        probeset=probeset.model_dump(),
+        codebook_hash=hash_codebook(codebook),
+        n_probe_pairs=len(out),
+        repeatmasker=rm_taxon or "skipped",
+        headerfooter=str(DEFAULT_HEADERFOOTER),
+        design=design,
+    )
+
     (gen_path := path / "generated").mkdir(exist_ok=True, parents=True)
-    out.write_parquet(gen_path / (probeset.name + ".parquet"))
+    out.write_parquet(gen_path / (probeset.name + ".parquet"), metadata=encode(record))
     logger.info(f"{len(out)} probe pairs written to {gen_path / (probeset.name + '.parquet')}")
 
     (gen_path / (probeset.name + "_pad.fasta")).write_text(
@@ -280,21 +297,8 @@ def run(
         gen_fasta(out["splintcons"], names=range(len(out))).getvalue()
     )
 
-    from .codebook.codebook import hash_codebook
-
     (gen_path / (probeset.name + ".provenance.json")).write_text(
-        json.dumps(
-            {
-                "generated_at": datetime.now().isoformat(),
-                "mkprobes_version": pkg_version("mkprobes"),
-                "probeset": probeset.model_dump(),
-                "codebook_hash": hash_codebook(codebook),
-                "n_probe_pairs": len(out),
-                "repeatmasker": rm_taxon or "skipped",
-                "headerfooter": str(DEFAULT_HEADERFOOTER),
-            },
-            indent=2,
-        )
+        json.dumps(record, indent=2, default=str) + "\n"
     )
     return out
 

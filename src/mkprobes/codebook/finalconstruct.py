@@ -13,6 +13,7 @@ from loguru import logger
 from ..candidates import _run_bowtie
 from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
 from ..starmap.starmap import rotate, test_splint_padlock
+from ..utils.provenance import provenance_metadata
 from ..utils.sequtils import reverse_complement as rc
 
 READOUTS: Final[dict[int, str]] = {
@@ -231,7 +232,18 @@ def construct(
     assert res["seq"].is_not_null().all()
 
     final_path.parent.mkdir(exist_ok=True, parents=True)
-    res.write_parquet(final_path)
+    res.write_parquet(
+        final_path,
+        metadata=provenance_metadata(
+            dataset.path,
+            stage="construct",
+            transcript=transcript,
+            bits=sorted(codebook[transcript]),
+            # `restriction` has already been folded into its filename form here.
+            restriction=restriction.lstrip("_") or None,
+            target_probes=target_probes,
+        ),
+    )
     # res.write_csv(final_path.with_suffix(".tsv"), separator="\t")  # deal with nested data
     logger.info(f"Written to {final_path}")
     return res
