@@ -1,8 +1,8 @@
 import io
-import shlex
 import subprocess
+from collections.abc import Collection, Iterable
 from pathlib import Path
-from typing import Any, Collection, Iterable
+from typing import Any
 
 from Bio import AlignIO
 from loguru import logger
@@ -73,24 +73,44 @@ def run_bowtie(
 ) -> str:
     logger.info(f"Running bowtie2 with {reference}")
 
+    # Built as a list, not a formatted string put through shlex.split: the index
+    # path is user-supplied and splitting broke every path containing a space
+    # (a Google Drive "My Drive/..." path became three separate arguments).
+    #
+    # A base that matches receives a bonus of +2 by default.
+    # A mismatched base at a high-quality position in the read receives a penalty of -6 by default.
+    # --no-hd No SAM header
+    # -k 100 report up to 100 alignments per read
+    # -D 20 consecutive seed extension attempts can "fail" before Bowtie 2 moves on
+    # -R 3 the maximum number of times Bowtie 2 will "re-seed" reads with repetitive seeds.
+    # -L 17 seed length
+    # -i C,2 Seed interval, every 2 bp
+    # --score-min G,1,4 f(x) = 1 + 4*ln(read_length)
+    # --score-min L,0,-0.6 f(x) = -0.6*read_length
+    command = [
+        "bowtie2",
+        "-x", str(reference),
+        "-U", "-",
+        "--no-hd", "-t",
+        *(["-k", str(n_return)] if n_return > 0 else ["-a"]),
+        "--local",
+        "-D", "20",
+        "-R", "3",
+        "--score-min", f"L,{threshold * 2},0",
+        "--mp", "1,1",
+        "--ignore-quals",
+        *(["-f"] if fasta else []),
+        "-N", "0",
+        "-L", str(seed_length),
+        "-i", "C,2",
+        "-p", str(threads),
+        *(["--norc"] if no_reverse else []),
+        *(["--nofw"] if no_forward else []),
+    ]
+
     try:
         res = subprocess.run(
-            shlex.split(
-                # A base that matches receives a bonus of +2 be default.
-                # A mismatched base at a high-quality position in the read receives a penalty of -6 by default.
-                # --no-hd No SAM header
-                # -k 100 report up to 100 alignments per read
-                # -D 20 consecutive seed extension attempts can "fail" before Bowtie 2 moves on
-                # -R 3 the maximum number of times Bowtie 2 will "re-seed" reads with repetitive seeds.
-                # -L 17 seed length
-                # -i C,2 Seed interval, every 2 bp
-                # --score-min G,1,4 f(x) = 1 + 4*ln(read_length)
-                # --score-min L,0,-0.6 f(x) = -0.6*read_length
-                f"bowtie2 -x {reference} -U - "
-                f"--no-hd -t {f'-k {n_return}' if n_return > 0 else '-a'} --local -D 20 -R 3 "
-                f"--score-min L,{threshold * 2},0 --mp 1,1 --ignore-quals {'-f ' if fasta else ''}"
-                f"-N 0 -L {seed_length} -i C,2 -p {threads} {'--norc ' if no_reverse else ''} {'--nofw ' if no_forward else ''}"
-            ),
+            command,
             input=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if capture_stderr else None,
@@ -140,11 +160,19 @@ def jellyfish(
         stdin = gen_fasta(seqs).getvalue().encode()
 
     stdout1 = run_process(
-        shlex.split(
-            rf"jellyfish count -o /dev/stdout -m {kmer} -t {thread} -s {hash_size} -L {minimum} -c {counter} {'--both-strands' if both_strands else ''} /dev/stdin"
-        ),
+        [
+            "jellyfish", "count",
+            "-o", "/dev/stdout",
+            "-m", str(kmer),
+            "-t", str(thread),
+            "-s", str(hash_size),
+            "-L", str(minimum),
+            "-c", str(counter),
+            *(["--both-strands"] if both_strands else []),
+            "/dev/stdin",
+        ],
         stdin,
     )
-    stdout2 = run_process(shlex.split("jellyfish dump -c -L 1 /dev/stdin"), stdout1)
+    stdout2 = run_process(["jellyfish", "dump", "-c", "-L", "1", "/dev/stdin"], stdout1)
 
     Path(out).write_bytes(stdout2)

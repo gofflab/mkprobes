@@ -140,10 +140,16 @@ def run(
         with ThreadPoolExecutor() as exc:
             for col_name in ["splint", "padlock"]:
                 (outpath / f"{col_name}.fasta").write_text(gen_fasta(dfs[col_name]).getvalue())
+                # Argument list, not shell=True with an interpolated path: a
+                # dataset directory containing a space became several arguments,
+                # and the taxon reached a shell unescaped.
                 exc.submit(
                     subprocess.run,
-                    f'RepeatMasker -pa 16 -norna -s -no_is -species "{rm_taxon}" {outpath / f"{col_name}.fasta"}',
-                    shell=True,
+                    [
+                        "RepeatMasker", "-pa", "16", "-norna", "-s", "-no_is",
+                        "-species", rm_taxon,
+                        str(outpath / f"{col_name}.fasta"),
+                    ],
                     check=True,
                 )
 
@@ -381,7 +387,7 @@ def manual_accept(path: Path, probeset: ProbeSet, *, ts: str):
         elif questionary.confirm(f"{ts} manual check?", default=True).ask():
             user_ok = handle_checks(ts, offtargets)
             if user_ok:
-                path_accept.write_text(json.dumps({**curr, **{ts: user_ok}}, indent=2, sort_keys=True))
+                path_accept.write_text(json.dumps({**curr, ts: user_ok}, indent=2, sort_keys=True))
             logger.info("Outputted acceptable genes to " + str(path_accept))
             return user_ok
         return None
