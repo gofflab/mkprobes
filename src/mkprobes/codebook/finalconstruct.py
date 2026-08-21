@@ -1,9 +1,9 @@
 # %%
 import json
-import re
+from collections.abc import Callable, Collection, Iterable, Sequence
 from itertools import chain, cycle, permutations
 from pathlib import Path
-from typing import Annotated, Callable, Collection, Final, Iterable, Sequence, cast
+from typing import Annotated, Final, cast
 
 import click
 import polars as pl
@@ -11,11 +11,12 @@ from Bio import Restriction, Seq
 from loguru import logger
 
 from ..candidates import _run_bowtie
-from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
+from ..ext.dataset import Dataset, load_dataset
 from ..starmap.starmap import rotate, test_splint_padlock
 from ..utils.provenance import provenance_metadata
 from ..utils.sequtils import reject_ambiguous_bases
 from ..utils.sequtils import reverse_complement as rc
+from .codebook import hash_codebook_file
 
 READOUTS: Final[dict[int, str]] = {
     x["id"]: x["seq"] for x in pl.read_csv(Path(__file__).parent / "readout_ref_filtered.csv").to_dicts()
@@ -192,6 +193,7 @@ def click_construct(
         codebook=json.loads(codebook.read_text()),
         target_probes=target_probes,
         restriction=restriction,
+        codebook_hash=hash_codebook_file(codebook),
     )
 
 
@@ -203,6 +205,7 @@ def construct(
     codebook: dict[str, Collection[int]],
     target_probes: int = 64,
     restriction: list[str] | str | None = None,
+    codebook_hash: str | None = None,
     construction_function: Callable[[pl.DataFrame, Collection[int]], pl.DataFrame] = construct_encoding,
     overwrite: bool = False,
 ):
@@ -272,6 +275,10 @@ def construct(
             stage="construct",
             transcript=transcript,
             bits=sorted(codebook[transcript]),
+            # Which codebook assigned those bits. Without it, two runs from
+            # different codebooks are indistinguishable from their own metadata:
+            # same transcript, same bits, no way to tell them apart.
+            codebook_hash=codebook_hash,
             # `restriction` has already been folded into its filename form here.
             restriction=restriction.lstrip("_") or None,
             target_probes=target_probes,

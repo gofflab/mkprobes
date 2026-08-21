@@ -12,6 +12,19 @@ from pydantic import BaseModel, TypeAdapter
 from scipy.stats import entropy
 
 
+def hash_codebook_file(path: Path | str) -> str:
+    """
+    Stable identifier for a codebook file.
+
+    Hashes the codebook as written, Blank codes included. Callers downstream
+    load it with Blanks filtered out - `load_worklist` and
+    `ProbeSet.load_codebook` both do - so hashing whatever dict happens to be in
+    hand gives a different value depending on who is asking. Hashing the file
+    keeps one identifier for one codebook.
+    """
+    return hash_codebook(json.loads(Path(path).read_text()))
+
+
 def hash_codebook(cb: dict[str, Collection[int]]) -> str:
     return md5(
         json.dumps(cb, sort_keys=True, ensure_ascii=True).encode(),
@@ -267,12 +280,14 @@ class ProbeSet(BaseModel):
     all_bit: int = 29
     n_probes: Literal["high", "low"] | int | None = None
 
-    def load_codebook(self, path: Path | str, include_blank: bool = False) -> dict[str, list[int]]:
+    def codebook_path(self, path: Path | str) -> Path:
+        """Resolves this probe set's codebook, falling back to a bare filename."""
         path = Path(path)
-        try:
-            cb = json.loads((path / self.codebook).read_text())
-        except FileNotFoundError:
-            cb = json.loads((path / self.codebook.split("/")[-1]).read_text())
+        candidate = path / self.codebook
+        return candidate if candidate.exists() else path / self.codebook.split("/")[-1]
+
+    def load_codebook(self, path: Path | str, include_blank: bool = False) -> dict[str, list[int]]:
+        cb = json.loads(self.codebook_path(path).read_text())
         return {k: v for k, v in cb.items() if not k.startswith("Blank") or include_blank}
 
     # def codebook_dfs(self, path: Path | str):

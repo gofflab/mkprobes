@@ -291,7 +291,7 @@ def run(
             "probe length have to agree - check --headerfooter."
         )
 
-    from .codebook.codebook import hash_codebook
+    from .codebook.codebook import hash_codebook_file
 
     # Carry the design parameters forward from a per-gene construct output, so the
     # ordered pool records the thresholds it was built under and not just its own.
@@ -299,7 +299,10 @@ def run(
     record = provenance_record(
         stage="assemble",
         probeset=probeset.model_dump(),
-        codebook_hash=hash_codebook(codebook),
+        # From the file: load_codebook drops Blank codes, so hashing the
+        # returned dict gave a value that never matched what make-codebook
+        # reported for the same codebook.
+        codebook_hash=hash_codebook_file(probeset.codebook_path(path)),
         n_probe_pairs=len(out),
         repeatmasker=rm_taxon or "skipped",
         headerfooter=str(DEFAULT_HEADERFOOTER),

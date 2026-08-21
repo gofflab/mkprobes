@@ -78,16 +78,52 @@ This derives the bit offset from the old codebook and refuses gene or bit
 overlap rather than silently colliding. `--offset` sets the offset by hand and
 is mutually exclusive with `--existing-codebook`.
 
-## Record which codebook you used
+## Which codebook produced a given file
+
+Every codebook has a short hash — a stable identifier for that exact set of
+targets and bit assignments. You do not have to record it anywhere: the tool
+does.
+
+`make-codebook` writes it beside the codebook, so it outlives the terminal:
+
+```text
+panel_a/codebook.json
+panel_a/codebook.hash     <- 25dd20
+```
+
+It is also stamped into the provenance of every file designed against that
+codebook — each per-target `_final_*.parquet`, and the assembled pool. So the
+question "which codebook produced this?" is answered by the file itself:
+
+```bash
+mkprobes provenance panel_a/output/Sox2-201_final_BamHIKpnI_2,10,18.parquet
+```
+
+```text
+{
+  "codebook_hash": "25dd20",
+  "bits": [2, 10, 18],
+  "stage": "construct",
+  ...
+}
+```
+
+Match that against `codebook.hash` to confirm an output came from the codebook
+you think it did. This matters when a codebook is regenerated: a different seed
+or an edited target list produces different bit assignments, and the outputs
+are otherwise indistinguishable — same target, same file name, different panel.
+
+To print the hash of any codebook directly:
 
 ```bash
 mkprobes hash panel_a/codebook.json
 ```
 
-`make-codebook` already logs this hash when it writes the file. It is a stable
-identifier for the exact codebook, so you can match output files to the
-codebook that produced them months later. Keep it in your run notes; it also
-appears in the assembly provenance record.
+:::{note}
+The hash covers the codebook as written, Blank codes included. Re-serialising
+it — different indentation, different key order — does not change it, because
+hashing sorts the keys first. Changing any target's bits does.
+:::
 
 ## What a codebook looks like
 
