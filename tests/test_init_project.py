@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from conftest import flatten_cli_output
+
 from mkprobes import cli
 from mkprobes.init_project import check_manifest, manifest_stub, max_bcidx
 from mkprobes.utils.targets import read_target_list
@@ -53,7 +55,7 @@ class TestInit:
         result = runner.invoke(cli.main, ["init", str(project)])
 
         assert result.exit_code != 0
-        assert "--force" in result.output
+        assert "--force" in flatten_cli_output(result.output)
 
     def test_force_overwrites(self, runner: CliRunner, project: Path):
         (project / "genes.txt").write_text("Edited\n")
@@ -69,7 +71,7 @@ class TestInit:
         )
 
         assert result.exit_code != 0
-        assert "--bcidx" in result.output
+        assert "--bcidx" in flatten_cli_output(result.output)
 
 
 class TestCheckManifest:
@@ -121,7 +123,7 @@ class TestCheckManifest:
         result = runner.invoke(cli.main, ["check-manifest", str(path)])
 
         assert result.exit_code == 0, result.output
-        assert "is valid" in result.output
+        assert "is valid" in flatten_cli_output(result.output)
 
 
 class TestReadTargetList:

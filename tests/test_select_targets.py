@@ -14,6 +14,8 @@ import numpy as np
 import pytest
 from click.testing import CliRunner
 
+from conftest import flatten_cli_output
+
 from mkprobes import cli
 
 pytest.importorskip("anndata")
@@ -166,7 +168,7 @@ class TestInputValidation:
         )
 
         assert result.exit_code != 0
-        assert "NotAGene" in result.output
+        assert "NotAGene" in flatten_cli_output(result.output)
 
     def test_rejects_asking_for_more_genes_than_exist(self, runner: CliRunner, tmp_path: Path):
         expr = synthetic(tmp_path)
@@ -174,7 +176,7 @@ class TestInputValidation:
         result = runner.invoke(cli.main, ["suggest-targets", str(expr), "--add", "99999"])
 
         assert result.exit_code != 0
-        assert "Lower --add" in result.output
+        assert "Lower --add" in flatten_cli_output(result.output)
 
     def test_rejects_a_missing_layer(self, runner: CliRunner, tmp_path: Path):
         expr = synthetic(tmp_path)
@@ -184,7 +186,7 @@ class TestInputValidation:
         )
 
         assert result.exit_code != 0
-        assert "no layer" in result.output
+        assert "no layer" in flatten_cli_output(result.output)
 
     def test_rejects_a_file_that_is_not_anndata(self, runner: CliRunner, tmp_path: Path):
         not_h5ad = tmp_path / "expr.h5ad"
@@ -193,4 +195,4 @@ class TestInputValidation:
         result = runner.invoke(cli.main, ["suggest-targets", str(not_h5ad), "--add", "3"])
 
         assert result.exit_code != 0
-        assert "AnnData" in result.output
+        assert "AnnData" in flatten_cli_output(result.output)

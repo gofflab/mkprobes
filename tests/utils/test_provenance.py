@@ -7,6 +7,8 @@ import polars as pl
 import pytest
 from click.testing import CliRunner
 
+from conftest import flatten_cli_output
+
 from mkprobes import cli
 from mkprobes.utils.provenance import (
     PROVENANCE_KEY,
@@ -90,7 +92,7 @@ class TestProvenanceCommand:
         result = CliRunner().invoke(cli.main, ["provenance", str(path)])
 
         assert result.exit_code != 0
-        assert "carries no provenance" in result.output
+        assert "carries no provenance" in flatten_cli_output(result.output)
 
 
 @pytest.mark.parametrize(

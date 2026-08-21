@@ -14,6 +14,8 @@ import polars as pl
 import pytest
 from click.testing import CliRunner
 
+from conftest import flatten_cli_output
+
 from mkprobes import cli
 from mkprobes.codebook.finalconstruct import count_final_probes
 
@@ -31,9 +33,9 @@ class TestFriendlyErrors:
         result = runner.invoke(cli.main, ["hash", str(bad)])
 
         assert result.exit_code != 0
-        assert "JSONDecodeError" in result.output
-        assert "--debug" in result.output
-        assert "Traceback" not in result.output
+        assert "JSONDecodeError" in flatten_cli_output(result.output)
+        assert "--debug" in flatten_cli_output(result.output)
+        assert "Traceback" not in flatten_cli_output(result.output)
 
     def test_debug_flag_reraises(self, runner: CliRunner, tmp_path: Path):
         bad = tmp_path / "codebook.json"
@@ -47,7 +49,7 @@ class TestFriendlyErrors:
         result = runner.invoke(cli.main, ["hash"])
 
         assert result.exit_code != 0
-        assert "Missing argument" in result.output
+        assert "Missing argument" in flatten_cli_output(result.output)
 
 
 class TestRequiredOptions:
@@ -57,15 +59,15 @@ class TestRequiredOptions:
         result = runner.invoke(cli.main, ["filter-genes", str(tmp_path)])
 
         assert result.exit_code != 0
-        assert "--genes" in result.output
-        assert "AttributeError" not in result.output
+        assert "--genes" in flatten_cli_output(result.output)
+        assert "AttributeError" not in flatten_cli_output(result.output)
 
     def test_construct_requires_target(self, runner: CliRunner, tmp_path: Path):
         result = runner.invoke(cli.main, ["construct", str(tmp_path), str(tmp_path)])
 
         assert result.exit_code != 0
-        assert "--gene" in result.output
-        assert "AttributeError" not in result.output
+        assert "--gene" in flatten_cli_output(result.output)
+        assert "AttributeError" not in flatten_cli_output(result.output)
 
     def test_construct_requires_codebook(self, runner: CliRunner, tmp_path: Path):
         # Click reports only the first missing option, so supply --gene to reach it.
@@ -74,8 +76,8 @@ class TestRequiredOptions:
         )
 
         assert result.exit_code != 0
-        assert "--codebook" in result.output
-        assert "AttributeError" not in result.output
+        assert "--codebook" in flatten_cli_output(result.output)
+        assert "AttributeError" not in flatten_cli_output(result.output)
 
 
 class TestFilterGenesCountsFinalProbes:
@@ -133,7 +135,7 @@ class TestFilterGenesCountsFinalProbes:
 
         assert result.exit_code == 0, result.output
         # The old code raised FileNotFoundError naming a path it never writes.
-        assert "FileNotFoundError" not in result.output
+        assert "FileNotFoundError" not in flatten_cli_output(result.output)
 
 
 class TestRestrictionIsFixedByChemistry:
@@ -164,8 +166,8 @@ class TestRestrictionIsFixedByChemistry:
         result = runner.invoke(cli.main, base + args)
 
         assert result.exit_code != 0
-        assert "--restriction" in result.output
-        assert "BamHI" in result.output
+        assert "--restriction" in flatten_cli_output(result.output)
+        assert "BamHI" in flatten_cli_output(result.output)
 
     def test_the_default_pair_is_accepted(self, runner: CliRunner, tmp_path: Path):
         codebook = tmp_path / "codebook.json"
@@ -204,7 +206,7 @@ class TestHelpAlwaysSucceeds:
         result = runner.invoke(cli.main, [command, "--help"])
 
         assert result.exit_code == 0, f"`mkprobes {command} --help` failed:\n{result.output}"
-        assert "Usage:" in result.output
+        assert "Usage:" in flatten_cli_output(result.output)
 
     def test_group_help_exits_zero(self, runner: CliRunner):
         result = runner.invoke(cli.main, ["--help"])
@@ -227,8 +229,8 @@ class TestExternalToolPreflight:
         result = runner.invoke(cli.main, ["candidates", str(tmp_path), "--gene", "Sox2"])
 
         assert result.exit_code != 0
-        assert "bowtie2" in result.output
-        assert "conda install" in result.output
+        assert "bowtie2" in flatten_cli_output(result.output)
+        assert "conda install" in flatten_cli_output(result.output)
 
     def test_run_panel_checks_before_designing(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -240,7 +242,7 @@ class TestExternalToolPreflight:
         result = runner.invoke(cli.main, ["run-panel", str(tmp_path), str(codebook)])
 
         assert result.exit_code != 0
-        assert "bowtie2" in result.output
+        assert "bowtie2" in flatten_cli_output(result.output)
 
     def test_list_failed_does_not_need_the_aligner(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -256,4 +258,4 @@ class TestExternalToolPreflight:
         )
 
         assert result.exit_code == 0, result.output
-        assert "A" in result.output
+        assert "A" in flatten_cli_output(result.output)
