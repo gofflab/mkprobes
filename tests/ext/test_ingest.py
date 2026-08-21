@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from conftest import flatten_cli_output
 import yaml
 from click.testing import CliRunner
 
@@ -329,3 +330,156 @@ class TestIngestEndToEnd:
             convert=False,
         )
         assert ds.check_kmers(rrna_seq)
+
+
+class TestUnstrandedTranscripts:
+    """
+    StringTie emits `.` for single-exon transcripts it cannot orient. gffread
+    keeps those but extracts the plus strand for them, so probes for any that
+    are really minus-strand are antisense and never bind - and nothing
+    downstream notices, because the sequence itself is valid.
+    """
+
+    def _gtf(self, tmp_path: Path, strands: list[str]) -> Path:
+        rows = []
+        for i, strand in enumerate(strands):
+            attrs = f'gene_id "g{i}"; transcript_id "t{i}";'
+            start, end = 100 + i * 200, 200 + i * 200
+            for feature in ("transcript", "exon"):
+                rows.append(f"chr1\ttest\t{feature}\t{start}\t{end}\t.\t{strand}\t.\t{attrs}")
+        path = tmp_path / "annotation.gtf"
+        path.write_text("\n".join(rows) + "\n")
+        return path
+
+    def _genome(self, tmp_path: Path) -> Path:
+        path = tmp_path / "genome.fa"
+        path.write_text(">chr1\n" + "ACGT" * 500 + "\n")
+        return path
+
+    def test_counts_transcripts_not_rows(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        # Two unstranded transcripts, each with an exon: four rows, two transcripts.
+        report = validate_gtf(self._gtf(tmp_path, [".", ".", "+"]), self._genome(tmp_path))
+
+        assert report.n_unstranded_transcripts == 2
+        strand_issue = next(i for i in report.issues if i.code == "STRAND_MISSING")
+        assert "2 transcript(s)" in strand_issue.message
+        assert "4 rows" not in strand_issue.message
+
+    def test_reports_the_share_of_the_annotation(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, [".", "+", "+", "-"]), self._genome(tmp_path))
+
+        strand_issue = next(i for i in report.issues if i.code == "STRAND_MISSING")
+        assert "25.0%" in strand_issue.message
+
+    def test_says_what_actually_happens(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["."]), self._genome(tmp_path))
+
+        message = next(i for i in report.issues if i.code == "STRAND_MISSING").message
+        # gffread keeps them and silently uses the plus strand; it does not skip.
+        assert "kept" in message
+        assert "skips" not in message
+        assert "antisense" in message
+
+    def test_collects_the_ids(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["+", ".", "-", "."]), self._genome(tmp_path))
+
+        assert report.unstranded_transcript_ids == ["t1", "t3"]
+
+    def test_ids_stay_out_of_the_json_report(self, tmp_path: Path):
+        import json
+
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["."] * 3), self._genome(tmp_path))
+
+        # There can be tens of thousands; they belong in their own file.
+        serialized = json.loads(report.model_dump_json())
+        assert "unstranded_transcript_ids" not in serialized
+        assert serialized["n_unstranded_transcripts"] == 3
+
+    def test_silent_when_every_transcript_is_stranded(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["+", "-", "+"]), self._genome(tmp_path))
+
+        assert report.n_unstranded_transcripts == 0
+        assert not [i for i in report.issues if i.code == "STRAND_MISSING"]
+
+
+class TestOverwriteGuard:
+    """
+    `--validate-only` writes annotation.gtf into the dataset directory. Guarding
+    the real ingest on that file made the documented flow - validate, then
+    ingest - fail on its own leftovers, so the guard is on dataset.json, the
+    marker that a build actually completed.
+    """
+
+    def _inputs(self, tmp_path: Path) -> tuple[Path, Path]:
+        genome = tmp_path / "genome.fa"
+        genome.write_text(">chr1\n" + "ACGT" * 500 + "\n")
+        gtf = tmp_path / "in.gtf"
+        gtf.write_text(
+            'chr1\tt\ttranscript\t100\t200\t.\t+\t.\tgene_id "g0"; transcript_id "t0";\n'
+            'chr1\tt\texon\t100\t200\t.\t+\t.\tgene_id "g0"; transcript_id "t0";\n'
+        )
+        return genome, gtf
+
+    def _run(self, runner: CliRunner, dataset_dir: Path, genome: Path, gtf: Path, *extra: str):
+        from mkprobes import cli
+
+        # ingest pre-flights gffread/bowtie2/jellyfish before reaching the
+        # guard. These tests are about the guard, so the environment probe is
+        # stubbed rather than made a prerequisite for running them.
+        with patch("mkprobes.ext.ingest.check_external_tools", return_value={}):
+            return runner.invoke(
+                cli.main,
+                ["ingest", str(dataset_dir), "--genome", str(genome), "--gtf", str(gtf),
+                 "--species", "test", *extra],
+            )
+
+    def test_validate_only_leftovers_do_not_block_a_real_ingest(self, tmp_path: Path):
+        runner = CliRunner()
+        genome, gtf = self._inputs(tmp_path)
+        dataset_dir = tmp_path / "ds"
+
+        first = self._run(runner, dataset_dir, genome, gtf, "--validate-only")
+        assert first.exit_code == 0, first.output
+        assert (dataset_dir / "annotation.gtf").exists()  # the leftover in question
+
+        second = self._run(runner, dataset_dir, genome, gtf)
+
+        # It may still fail later for want of external tools; what it must not
+        # do is refuse up front because validation ran.
+        assert "already holds a built dataset" not in flatten_cli_output(second.output)
+
+    def test_a_built_dataset_is_still_protected(self, tmp_path: Path):
+        runner = CliRunner()
+        genome, gtf = self._inputs(tmp_path)
+        dataset_dir = tmp_path / "ds"
+        dataset_dir.mkdir()
+        (dataset_dir / "dataset.json").write_text("{}")
+
+        result = self._run(runner, dataset_dir, genome, gtf)
+
+        assert result.exit_code != 0
+        assert "already holds a built dataset" in flatten_cli_output(result.output)
+        assert "--overwrite" in flatten_cli_output(result.output)
+
+    def test_overwrite_bypasses_the_guard(self, tmp_path: Path):
+        runner = CliRunner()
+        genome, gtf = self._inputs(tmp_path)
+        dataset_dir = tmp_path / "ds"
+        dataset_dir.mkdir()
+        (dataset_dir / "dataset.json").write_text("{}")
+
+        result = self._run(runner, dataset_dir, genome, gtf, "--overwrite", "--validate-only")
+
+        assert "already holds a built dataset" not in flatten_cli_output(result.output)

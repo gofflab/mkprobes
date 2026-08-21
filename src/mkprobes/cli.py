@@ -47,8 +47,14 @@ class FriendlyGroup(click.RichGroup):
             if ctx.params.get("debug"):
                 raise
             logger.opt(exception=exc).debug("Command failed")
+            # Name the whole invocation: --debug belongs to the group, so
+            # appending it to the subcommand - the obvious reading of a bare
+            # "re-run with --debug" - fails with "No such option".
+            retry = f"mkprobes --debug {ctx.invoked_subcommand} ..." if ctx.invoked_subcommand else "mkprobes --debug ..."
             raise click.ClickException(
-                f"{type(exc).__name__}: {exc}\n\nRe-run with --debug for the full traceback."
+                f"{type(exc).__name__}: {exc}\n\n"
+                f"For the full traceback, re-run as `{retry}` "
+                "(--debug goes before the command name, not after)."
             ) from exc
 
 

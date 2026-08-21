@@ -77,7 +77,8 @@ Flags you are likely to want:
   annotations: stripping `.N` suffixes merges StringTie isoforms
   (`STRG.1.1` and `STRG.1.2` become one).
 
-Ingested datasets carry two extra files: `validation_report.json`, and
+Ingested datasets carry `validation_report.json`, `unstranded_transcripts.txt`
+(only when some transcripts lack a strand — see {doc}`../reference/file_formats`), and
 `solar_intake.yaml`, a provenance manifest with input sha256s, tool versions,
 the literal command run and QC counts. **Fill in its stub fields** (assembly
 source, annotation method, data owner) — that file is how another lab member
