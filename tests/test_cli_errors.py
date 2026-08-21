@@ -210,3 +210,50 @@ class TestHelpAlwaysSucceeds:
         result = runner.invoke(cli.main, ["--help"])
 
         assert result.exit_code == 0
+
+
+class TestExternalToolPreflight:
+    """
+    A missing aligner used to surface as a raw subprocess error inside sixteen
+    worker processes, minutes into a run. These pin that it is caught up front,
+    and that read-only paths are not gated on it.
+    """
+
+    def test_candidates_names_the_missing_tool_and_the_fix(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr("shutil.which", lambda _: None)
+
+        result = runner.invoke(cli.main, ["candidates", str(tmp_path), "--gene", "Sox2"])
+
+        assert result.exit_code != 0
+        assert "bowtie2" in result.output
+        assert "conda install" in result.output
+
+    def test_run_panel_checks_before_designing(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        codebook = tmp_path / "codebook.json"
+        codebook.write_text(json.dumps({"A": [1, 2, 3]}))
+        monkeypatch.setattr("shutil.which", lambda _: None)
+
+        result = runner.invoke(cli.main, ["run-panel", str(tmp_path), str(codebook)])
+
+        assert result.exit_code != 0
+        assert "bowtie2" in result.output
+
+    def test_list_failed_does_not_need_the_aligner(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Inspecting a finished panel is read-only; gating it on bowtie2 would
+        # be gratuitous.
+        codebook = tmp_path / "codebook.json"
+        codebook.write_text(json.dumps({"A": [1, 2, 3]}))
+        monkeypatch.setattr("shutil.which", lambda _: None)
+
+        result = runner.invoke(
+            cli.main, ["run-panel", str(tmp_path), str(codebook), "--list-failed"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "A" in result.output
