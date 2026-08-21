@@ -52,3 +52,10 @@ workflows/dataflow_map
 reference/cli
 reference/file_formats
 ```
+
+```{toctree}
+:maxdepth: 1
+:caption: Notes
+
+notes/probe_selection_defects
+```
