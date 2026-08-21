@@ -88,6 +88,10 @@ class DatasetDefinition(BaseModel):
       must carry a `transcript_id` and/or `gene_id` column to join against the
       dataset. Typical uses: ortholog mappings, functional annotation
       (eggNOG/InterPro), expression tables (FPKM).
+    - `gene_name_column` names the annotation column holding the gene names you
+      want to write in a target list. Without it, name lookup searches every
+      text column of every table, which is slow on wide tables and can match
+      something you did not mean.
     - All optional fields have back-compat defaults: older `dataset.json` files
       load unchanged.
     """
@@ -97,6 +101,7 @@ class DatasetDefinition(BaseModel):
     blocklist_kmer_name: str | None = None
     genome_fasta_name: str | None = None
     annotations: dict[str, str] = {}
+    gene_name_column: str | None = None
 
 
 class Dataset:
@@ -131,6 +136,7 @@ class Dataset:
         trna_rna_kmers_path: str | Path | None = None,
         genome_fasta_path: str | Path | None = None,
         annotation_paths: dict[str, Path] | None = None,
+        gene_name_column: str | None = None,
     ):
         """
         Initializes a Dataset object.
@@ -145,6 +151,9 @@ class Dataset:
             genome_fasta_path: Optional path to the source genome FASTA (used by
                 downstream steps such as genome-mode simulation, not by the
                 probe pipeline itself).
+            gene_name_column: Column of a registered annotation table holding
+                the gene names used in target lists. Restricts name lookup to
+                that column instead of searching every text column.
             annotation_paths: Optional registry of named annotation tables
                 (name -> file path); load with `self.annotation(name)`.
         """
@@ -158,6 +167,7 @@ class Dataset:
         )
         self.genome_fasta_path = Path(genome_fasta_path) if genome_fasta_path else None
         self.annotation_paths: dict[str, Path] = dict(annotation_paths or {})
+        self.gene_name_column = gene_name_column
 
         # For backwards compatibility
         self.gencode = self.data
@@ -196,6 +206,7 @@ class Dataset:
         blocklist_fasta: Sequence[str | Path] | None = None,
         genome_fasta: str | Path | None = None,
         annotations: dict[str, str | Path] | None = None,
+        gene_name_column: str | None = None,
         interactive: bool = True,
         overwrite: bool = False,
     ):
@@ -230,6 +241,9 @@ class Dataset:
                 dataset directory (copied in). Not used by the probe pipeline
                 itself, but enables downstream genome-mode steps (e.g.
                 simulation for non-model species).
+            gene_name_column: Column of one of `annotations` holding the gene
+                names to use in target lists. Validated against the registered
+                tables; name lookup then searches only that column.
             annotations: Optional named annotation tables (name -> file path,
                 parquet/csv/tsv). Copied into the dataset directory and
                 validated: each must carry a `transcript_id` and/or `gene_id`
@@ -324,6 +338,23 @@ class Dataset:
                     shutil.copy(table_file, new_table)
                 annotation_names[name] = new_table.name
 
+        if gene_name_column:
+            carriers = [
+                name
+                for name, table_name in annotation_names.items()
+                if gene_name_column in _read_annotation_table(path / table_name).columns
+            ]
+            if not carriers:
+                available = {
+                    name: sorted(_read_annotation_table(path / table_name).columns)
+                    for name, table_name in annotation_names.items()
+                }
+                raise ValueError(
+                    f"No registered annotation table has a column {gene_name_column!r}. "
+                    f"Columns available: {available}"
+                )
+            logger.info(f"Gene names will be read from {carriers[0]!r}.{gene_name_column}.")
+
         Path(path / "dataset.json").write_text(
             DatasetDefinition(
                 external_data={
@@ -341,6 +372,7 @@ class Dataset:
                 blocklist_kmer_name=blocklist_kmer_name,
                 genome_fasta_name=genome_fasta_name,
                 annotations=annotation_names,
+                gene_name_column=gene_name_column,
             ).model_dump_json()
         )
 
@@ -352,6 +384,7 @@ class Dataset:
             trna_rna_kmers_path=path / blocklist_kmer_name if blocklist_kmer_name else None,
             genome_fasta_path=path / genome_fasta_name if genome_fasta_name else None,
             annotation_paths={k: path / v for k, v in annotation_names.items()},
+            gene_name_column=gene_name_column,
         )
 
     @classmethod
@@ -389,6 +422,7 @@ class Dataset:
                 path / definition.genome_fasta_name if definition.genome_fasta_name else None
             ),
             annotation_paths={k: path / v for k, v in definition.annotations.items()},
+            gene_name_column=definition.gene_name_column,
         )
 
     def check_kmers(self, seq: str):
@@ -638,6 +672,16 @@ def load_dataset(path: Path | str) -> "Dataset | ReferenceDataset":
     "de novo annotations whose IDs embed meaningful dots (StringTie STRG.1.1, AUGUSTUS g1.t1).",
 )
 @click.option(
+    "--gene-name-column",
+    "gene_name_column",
+    type=str,
+    default=None,
+    metavar="COLUMN",
+    help="Column of a registered annotation table holding the gene names you want to write "
+    "in target lists, e.g. --gene-name-column Hsapiens_gene_name. Name lookup then uses only "
+    "that column. Cells holding a comma-separated list count as one name per entry.",
+)
+@click.option(
     "--annotation",
     "annotation",
     multiple=True,
@@ -655,6 +699,7 @@ def create_dataset(
     fasta_key_regex: str,
     strip_version: bool,
     annotation: tuple[str, ...],
+    gene_name_column: str | None,
     overwrite: bool,
 ):
     """Build a probe-design dataset from a transcriptome FASTA.
@@ -680,5 +725,6 @@ def create_dataset(
         strip_version=strip_version,
         blocklist_fasta=list(blocklist_fasta) or None,
         annotations=annotations or None,
+        gene_name_column=gene_name_column,
         overwrite=overwrite,
     )

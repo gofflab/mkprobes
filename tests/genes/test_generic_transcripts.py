@@ -8,7 +8,11 @@ import pytest
 
 from mkprobes.ext.dataset import Dataset
 from mkprobes.ext.external_data import ExternalData, MockGTF
-from mkprobes.genes.chkgenes import get_transcripts, get_transcripts_generic
+from mkprobes.genes.chkgenes import (
+    _resolve_via_annotations,
+    get_transcripts,
+    get_transcripts_generic,
+)
 
 
 class FakeFasta(dict):
@@ -113,3 +117,57 @@ class TestCandidatesCliWiring:
         assert res.exit_code == 0, res.output
         mock_load.assert_called_once()
         assert mock_get.call_args[0][0] is sentinel
+
+
+class TestGeneNameColumn:
+    """
+    Target lists are written in whatever names the annotation carries. Naming
+    the column that holds them keeps lookup off the rest of a wide table -
+    which on a real ortholog table meant scanning protein sequences and ESM
+    embeddings for something that looked like a gene name.
+    """
+
+    def _table(self) -> pl.DataFrame:
+        return pl.DataFrame({
+            "transcript_id": ["t1", "t2", "t3"],
+            "gene_id": ["g1", "g2", "g3"],
+            # Ortholog tables routinely map one transcript to several symbols.
+            "human_name": ["SOX2", "UBE2A,UBE2B", "RNF185,,RNF5,,"],
+            "local_name": ["och-sox2", "och-ube2", "och-rnf5"],
+            "notes": ["SOX2", "", ""],
+        })
+
+    def _dataset(self, column: str | None):
+        dataset = MagicMock(spec=Dataset)
+        dataset.annotation_paths = {"annot": Path("x")}
+        dataset.annotation = lambda name: self._table()
+        dataset.gene_name_column = column
+        return dataset
+
+    def test_named_column_resolves(self):
+        assert _resolve_via_annotations(self._dataset("human_name"), "SOX2") == ["t1", "g1"]
+
+    def test_multi_valued_cells_match_per_entry(self):
+        # An exact match against the whole cell would never fire on these.
+        assert _resolve_via_annotations(self._dataset("human_name"), "UBE2B") == ["t2", "g2"]
+        assert _resolve_via_annotations(self._dataset("human_name"), "RNF5") == ["t3", "g3"]
+
+    def test_matching_is_case_insensitive(self):
+        assert _resolve_via_annotations(self._dataset("human_name"), "sox2") == ["t1", "g1"]
+
+    def test_other_columns_are_not_consulted(self):
+        # `local_name` carries och-sox2, but the dataset says human_name.
+        assert _resolve_via_annotations(self._dataset("human_name"), "och-sox2") == []
+
+    def test_a_different_column_selects_different_names(self):
+        assert _resolve_via_annotations(self._dataset("local_name"), "och-sox2") == ["t1", "g1"]
+        assert _resolve_via_annotations(self._dataset("local_name"), "SOX2") == []
+
+    def test_without_a_named_column_every_column_is_searched(self):
+        # Historical behaviour, kept for datasets built before the option.
+        every = self._dataset(None)
+        assert _resolve_via_annotations(every, "SOX2") == ["t1", "g1"]
+        assert _resolve_via_annotations(every, "och-sox2") == ["t1", "g1"]
+
+    def test_unknown_column_matches_nothing_rather_than_raising(self):
+        assert _resolve_via_annotations(self._dataset("no_such_column"), "SOX2") == []

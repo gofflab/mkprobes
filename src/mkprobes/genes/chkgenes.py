@@ -90,19 +90,31 @@ def _resolve_via_annotations(dataset: Dataset, token: str) -> list[str]:
     Resolves a token (e.g. a human ortholog symbol) through the dataset's
     registered annotation tables.
 
-    Searches every non-join column of each table for a case-insensitive exact
-    match; hits map back through the table's `transcript_id`/`gene_id` join
-    column. Returns matching values from the join columns (transcript IDs
-    and/or gene IDs), empty if nothing matched.
+    When the dataset names a `gene_name_column`, only that column is consulted.
+    Otherwise every non-join text column of every table is searched, which is
+    the historical behaviour: convenient on a small table, but slow on a wide
+    one and liable to match a column you never meant as a name.
+
+    Matching is case-insensitive and exact, except that a cell holding a
+    comma-separated list is treated as one name per entry - ortholog tables
+    routinely map one transcript to several symbols that way, and an exact
+    match against the whole cell would never fire.
+
+    Hits map back through the table's `transcript_id`/`gene_id` join columns.
     """
+    wanted = getattr(dataset, "gene_name_column", None)
     hits: list[str] = []
     for name in sorted(dataset.annotation_paths):
         table = dataset.annotation(name)
         join_cols = [c for c in ("transcript_id", "gene_id") if c in table.columns]
-        for col in table.columns:
-            if col in join_cols or table[col].dtype != pl.Utf8:
+        columns = [wanted] if wanted else [c for c in table.columns if c not in join_cols]
+        for col in columns:
+            if col not in table.columns or table[col].dtype != pl.Utf8:
                 continue
-            matched = table.filter(pl.col(col).str.to_lowercase() == token.lower())
+            entries = pl.col(col).str.split(",").list.eval(
+                pl.element().str.strip_chars().str.to_lowercase()
+            )
+            matched = table.filter(entries.list.contains(token.strip().lower()))
             if not matched.is_empty():
                 for jc in join_cols:
                     hits.extend(matched[jc].drop_nulls().to_list())
