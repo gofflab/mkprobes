@@ -195,7 +195,12 @@ def run_screen(
 @click.option(
     "--maxoverlap", type=int, default=20, help="Maximum sequence overlap between probes if minimum is set."
 )
-@click.option("--restriction", type=str, help="Restriction enzymes to filter probes by.")
+@click.option(
+    "--restriction",
+    type=str,
+    help="Comma-separated enzymes whose sites probes must avoid. "
+    "SOLAR chemistry fixes this to BamHI,KpnI.",
+)
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
 def screen(
     data_dir: str,
@@ -208,6 +213,14 @@ def screen(
     overwrite: bool = False,
 ):
     """Screening of probes candidates for a gene."""
+    from .constants import validate_restriction
+
+    enzymes = [e.strip() for e in restriction.split(",") if e.strip()] if restriction else None
+    try:
+        validate_restriction(enzymes)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--restriction") from e
+
     run_screen(
         data_dir,
         gene,
@@ -215,6 +228,6 @@ def screen(
         overlap=overlap,
         minimum=minimum,
         maxoverlap=maxoverlap,
-        restriction=restriction.split(",") if restriction else None,
+        restriction=enzymes,
         overwrite=overwrite,
     )

@@ -134,3 +134,59 @@ class TestFilterGenesCountsFinalProbes:
         assert result.exit_code == 0, result.output
         # The old code raised FileNotFoundError naming a path it never writes.
         assert "FileNotFoundError" not in result.output
+
+
+class TestRestrictionIsFixedByChemistry:
+    """
+    `--restriction` looked configurable but assembly only ever looked for the
+    default pair's filenames, so a different pair computed a whole panel and
+    then failed to find a single gene.
+    """
+
+    @pytest.mark.parametrize(
+        "command,args",
+        [
+            ("run-panel", ["--restriction", "EcoRI,XhoI"]),
+            ("screen", ["--restriction", "EcoRI,XhoI"]),
+        ],
+    )
+    def test_other_enzymes_are_refused_before_any_work(
+        self, runner: CliRunner, tmp_path: Path, command: str, args: list[str]
+    ):
+        codebook = tmp_path / "codebook.json"
+        codebook.write_text(json.dumps({"A": [1, 2, 3]}))
+        base = (
+            [command, str(tmp_path), str(codebook)]
+            if command == "run-panel"
+            else [command, str(tmp_path), "A"]
+        )
+
+        result = runner.invoke(cli.main, base + args)
+
+        assert result.exit_code != 0
+        assert "--restriction" in result.output
+        assert "BamHI" in result.output
+
+    def test_the_default_pair_is_accepted(self, runner: CliRunner, tmp_path: Path):
+        codebook = tmp_path / "codebook.json"
+        codebook.write_text(json.dumps({"A": [1, 2, 3]}))
+
+        result = runner.invoke(
+            cli.main,
+            ["run-panel", str(tmp_path), str(codebook), "--restriction", "KpnI,BamHI",
+             "--list-failed"],
+        )
+
+        # Order is not significant, and --list-failed exits before any design work.
+        assert result.exit_code == 0, result.output
+
+    def test_assembly_filenames_track_the_constant(self):
+        # The token was hardcoded in three places; assembly must derive it, or
+        # the two drift apart again.
+        import importlib
+
+        source = importlib.import_module("mkprobes.assembly").__loader__.get_source(
+            "mkprobes.assembly"
+        )
+        assert "_final_BamHIKpnI_" not in source
+        assert "RESTRICTION_TOKEN" in source

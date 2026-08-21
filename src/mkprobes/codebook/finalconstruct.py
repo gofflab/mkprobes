@@ -161,6 +161,13 @@ def click_construct(
     Reads that target's screened probes from OUTPUT_PATH and writes
     `<target>_final_<enzymes>_<bits>.parquet` beside them.
     """
+    from ..constants import validate_restriction
+
+    try:
+        validate_restriction(restriction)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--restriction") from e
+
     construct(
         load_dataset(path),
         output_path,

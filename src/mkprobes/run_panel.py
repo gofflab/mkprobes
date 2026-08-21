@@ -289,10 +289,17 @@ def run_panel_cli(
 
     Give an optional GENE to re-run just that target (forces overwrite for it).
     """
+    from .constants import validate_restriction
     from .ext.ingest import DESIGN_TOOLS, check_external_tools
 
     output = output or codebook.parent / "output"
     enzymes = tuple(e.strip() for e in restriction.split(",") if e.strip())
+    try:
+        validate_restriction(enzymes)
+    except ValueError as e:
+        # Fails here rather than after every gene has been designed: assembly
+        # only looks for the default pair's filenames.
+        raise click.BadParameter(str(e), param_hint="--restriction") from e
 
     if list_failed or list_failed_all:
         cb = load_worklist(codebook)

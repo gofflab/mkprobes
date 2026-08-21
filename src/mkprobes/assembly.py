@@ -32,6 +32,7 @@ from loguru import logger
 from pydantic import TypeAdapter
 
 from .codebook.codebook import ProbeSet
+from .constants import RESTRICTION_TOKEN
 from .starmap.starmap import generate_head_splint, test_splint_padlock
 from .utils._alignment import gen_fasta
 from .utils.provenance import encode, provenance_record, read_provenance
@@ -90,7 +91,7 @@ def run(
 
     for ts in tss:
         try:
-            final = path / f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
+            final = path / f"output/{ts}_final_{RESTRICTION_TOKEN}_{','.join(map(str, sorted(codebook[ts])))}.parquet"
             df = pl.read_parquet(final).sort(
                 [
                     pl.col("priority").list.max(),
@@ -312,6 +313,12 @@ def run(
 )
 @click.pass_context
 def cli(ctx: click.Context, manifest: Path, headerfooter: Path | None):
+    """Turn designed probes into an orderable oligo pool.
+
+    MANIFEST is a JSON list of probe sets, each naming a codebook and the
+    header/footer row to build against. Use `gen` to assemble the pool, or
+    `short` first to triage targets that came up thin.
+    """
     ctx.ensure_object(dict)
     if headerfooter is not None:
         global hfs
@@ -411,7 +418,7 @@ def short(
         for ts in tss:
             try:
                 _df = pl.read_parquet(
-                    path / f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
+                    path / f"output/{ts}_final_{RESTRICTION_TOKEN}_{','.join(map(str, sorted(codebook[ts])))}.parquet"
                 )
                 _df = _df.sort([pl.col("priority").list.min(), pl.col("hp").list.max()])
                 dfs_.append(
@@ -469,7 +476,7 @@ def short(
                 baddies.append(ts)
                 logger.warning(
                     "File "
-                    + f"output/{ts}_final_BamHIKpnI_{','.join(map(str, sorted(codebook[ts])))}.parquet"
+                    + f"output/{ts}_final_{RESTRICTION_TOKEN}_{','.join(map(str, sorted(codebook[ts])))}.parquet"
                     + " not found. This usually means that there are no probes for this gene."
                 )
                 manual_accept(path, probeset, ts=ts)

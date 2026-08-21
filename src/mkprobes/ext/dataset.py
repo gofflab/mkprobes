@@ -657,8 +657,14 @@ def create_dataset(
     annotation: tuple[str, ...],
     overwrite: bool,
 ):
+    """Build a probe-design dataset from a transcriptome FASTA.
+
+    Use this when you already have transcript sequences. To start from a genome
+    plus an annotation instead, use `mkprobes ingest`, which extracts the
+    transcripts for you.
+    """
     if not species:
-        raise ValueError("Species name is required.")
+        raise click.BadParameter("A species name is required.", param_hint="--species")
     annotations: dict[str, str | Path] = {}
     for spec in annotation:
         name, sep, table_path = spec.partition("=")
