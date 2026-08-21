@@ -190,3 +190,23 @@ class TestRestrictionIsFixedByChemistry:
         )
         assert "_final_BamHIKpnI_" not in source
         assert "RESTRICTION_TOKEN" in source
+
+
+class TestHelpAlwaysSucceeds:
+    """
+    The friendly error handler wraps unexpected exceptions, and click signals
+    `--help` by raising `click.exceptions.Exit` - which is a RuntimeError. An
+    over-broad catch turned every subcommand's help into exit code 1.
+    """
+
+    @pytest.mark.parametrize("command", sorted(cli.main.commands))
+    def test_subcommand_help_exits_zero(self, runner: CliRunner, command: str):
+        result = runner.invoke(cli.main, [command, "--help"])
+
+        assert result.exit_code == 0, f"`mkprobes {command} --help` failed:\n{result.output}"
+        assert "Usage:" in result.output
+
+    def test_group_help_exits_zero(self, runner: CliRunner):
+        result = runner.invoke(cli.main, ["--help"])
+
+        assert result.exit_code == 0

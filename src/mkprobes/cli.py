@@ -38,7 +38,9 @@ class FriendlyGroup(click.RichGroup):
     def invoke(self, ctx: click.Context):
         try:
             return super().invoke(ctx)
-        except (click.ClickException, click.Abort, SystemExit):
+        except (click.ClickException, click.Abort, click.exceptions.Exit, SystemExit):
+            # click.exceptions.Exit is a RuntimeError, and carries the exit code
+            # for `--help` and for any command that exits deliberately.
             raise
         except Exception as exc:
             if ctx.params.get("debug"):
