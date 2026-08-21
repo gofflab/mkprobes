@@ -12,6 +12,7 @@ import rich_click as click
 from loguru import logger
 
 from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
+from ..utils.targets import read_target_list
 from ..ext.external_data import MockGTF, get_ensembl
 from ..utils.printing import jprint
 
@@ -50,11 +51,7 @@ def chkgenes(path: Path, genes: Path):
 
     ds = load_dataset(path)
     del path
-    gs: list[str] = re.split(r"[\s,]+", genes.read_text())
-    if not gs:
-        raise ValueError("No genes provided")
-
-    gs = list(filter(lambda x: x, gs))
+    gs = read_target_list(genes)
     for gene in gs:
         if not gene.isascii():
             raise ValueError(f"{gene} not ASCII.")
@@ -336,8 +333,7 @@ def convert_to_transcripts(
     """Convert gene names to transcript IDs (canonical for reference datasets; longest/all otherwise)"""
     ds = load_dataset(path)
     del path
-    gene_names = genes.read_text().splitlines()
-    assert len(gene_names) == len(set(gene_names))
+    gene_names = read_target_list(genes)
     res = get_transcripts(ds, gene_names, mode=mode)
 
     if mode != "all":
@@ -375,7 +371,7 @@ def transcripts(
     """Get transcript ID from gene name or gene ID"""
 
     if genefile:
-        genes = genefile.read_text().splitlines()
+        genes = read_target_list(genefile)
     elif gene:
         genes = [gene]
     else:

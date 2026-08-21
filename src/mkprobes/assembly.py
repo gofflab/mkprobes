@@ -29,7 +29,6 @@ import rich_click as click
 from Bio import Seq
 from Bio.Restriction import BamHI, KpnI  # type: ignore
 from loguru import logger
-from pydantic import TypeAdapter
 
 from .codebook.codebook import ProbeSet
 from .constants import RESTRICTION_TOKEN
@@ -319,12 +318,19 @@ def cli(ctx: click.Context, manifest: Path, headerfooter: Path | None):
     header/footer row to build against. Use `gen` to assemble the pool, or
     `short` first to triage targets that came up thin.
     """
+    from .init_project import check_manifest
+
     ctx.ensure_object(dict)
     if headerfooter is not None:
         global hfs
         hfs = pl.read_csv(headerfooter)
         logger.info(f"Using header/footer table {headerfooter}.")
-    mfs = TypeAdapter(list[ProbeSet]).validate_json(Path(manifest).read_text())
+    # Validated here rather than deep in `gen`: an out-of-range bcidx or a
+    # missing codebook used to surface only after the pool had been built.
+    try:
+        mfs = check_manifest(manifest)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
     ctx.obj["manifest"] = mfs
     ctx.obj["path"] = manifest.parent
 
