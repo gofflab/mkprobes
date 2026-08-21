@@ -1,9 +1,0 @@
-{
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda",
-    // Don't auto-activate an environment in new terminals: this repo has both a
-    // uv .venv (3.14) and a conda env (3.12), and stacking them makes it
-    // ambiguous which `mkprobes` you are running. Activate deliberately.
-    "python-envs.terminal.autoActivationType": "off",
-    "python.terminal.activateEnvironment": false
-}
