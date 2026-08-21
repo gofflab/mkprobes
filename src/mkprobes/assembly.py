@@ -13,11 +13,11 @@ CLI: ``mkprobes assemble <manifest.json> {short|gen}``.
 
 import json
 import subprocess
-import zlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from importlib.metadata import version as pkg_version
 from importlib.resources import files
+from itertools import cycle, islice
 from pathlib import Path
 
 import numpy as np
@@ -68,14 +68,6 @@ def backfill(seq: str, target: int = 148):
     )
 
 
-def _head_splint(padlock: str) -> str:
-    # Per-row RNG seeded from the padlock itself: the original shared
-    # seeded generator was consumed in polars' evaluation order, which is
-    # not stable across runs (chunk-parallel UDF execution), making the
-    # 3-nt head splint - and thus the oligo pool - nondeterministic.
-    return generate_head_splint(padlock, np.random.default_rng(zlib.crc32(padlock.encode())))
-
-
 def run(
     path: Path,
     probeset: ProbeSet,
@@ -85,6 +77,7 @@ def run(
     rm_species: str | None = None,
     skip_repeatmasker: bool = False,
 ):
+    rand = np.random.default_rng(0)
     idx = probeset.bcidx
     codebook = probeset.load_codebook(path)
     logger.info(f"Loaded {probeset.codebook} with {len(codebook)} genes.")
@@ -192,7 +185,7 @@ def run(
             # head
             hfs[pad_idx, "header"][-3:]
             + pl.col("padlock")
-            .map_elements(_head_splint, return_dtype=pl.Utf8)
+            .map_elements(lambda x: generate_head_splint(x, rand), return_dtype=pl.Utf8)
             .str.to_lowercase()
             + "ta"  # what the paper uses
             + pl.col("seq").map_elements(rc, return_dtype=pl.Utf8)
@@ -202,14 +195,12 @@ def run(
         + hfs[pad_idx, "footer"][:3]
     )
 
+    it = cycle("ATAAT")
+
     def splint_pad(seq: str, target: int = 47):
-        # Per-row filler from a fresh "ATAAT" repeat: the original drew from a
-        # shared cycling iterator whose consumption order followed polars'
-        # (unstable) evaluation order, making the padding nondeterministic.
         if len(seq) > target:
             return seq
-        need = target - len(seq)
-        return ("ATAAT" * (need // 5 + 1))[:need] + seq
+        return "".join(islice(it, target - len(seq))) + seq
 
     # Splint
     res = (
