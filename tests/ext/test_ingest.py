@@ -435,11 +435,15 @@ class TestOverwriteGuard:
     def _run(self, runner: CliRunner, dataset_dir: Path, genome: Path, gtf: Path, *extra: str):
         from mkprobes import cli
 
-        return runner.invoke(
-            cli.main,
-            ["ingest", str(dataset_dir), "--genome", str(genome), "--gtf", str(gtf),
-             "--species", "test", *extra],
-        )
+        # ingest pre-flights gffread/bowtie2/jellyfish before reaching the
+        # guard. These tests are about the guard, so the environment probe is
+        # stubbed rather than made a prerequisite for running them.
+        with patch("mkprobes.ext.ingest.check_external_tools", return_value={}):
+            return runner.invoke(
+                cli.main,
+                ["ingest", str(dataset_dir), "--genome", str(genome), "--gtf", str(gtf),
+                 "--species", "test", *extra],
+            )
 
     def test_validate_only_leftovers_do_not_block_a_real_ingest(self, tmp_path: Path):
         runner = CliRunner()
