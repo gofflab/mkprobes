@@ -126,7 +126,13 @@ class IngestValidationReport(BaseModel):
     transcripts_per_gene_median: float | None = None
     transcripts_per_gene_max: int | None = None
     gene_name_source: str = "gene_name"
+    n_unstranded_transcripts: int = 0
     issues: list[ValidationIssue] = Field(default_factory=list)
+
+    #: IDs of transcripts with no strand. Excluded from the JSON report - there
+    #: can be tens of thousands - and written to `unstranded_transcripts.txt`
+    #: instead, so targets can be checked against them.
+    unstranded_transcript_ids: list[str] = Field(default_factory=list, exclude=True)
 
     def add(self, code: str, severity: Literal["error", "warning"], message: str, fix: str | None = None):
         self.issues.append(ValidationIssue(code=code, severity=severity, message=message, fix=fix))
@@ -225,13 +231,33 @@ def validate_gtf(gtf_path: Path, genome_fasta: Path) -> IngestValidationReport:
             fix="GTF coordinates are 1-based inclusive with start <= end regardless of strand.",
         )
 
-    # Strand.
-    n_strandless = df.filter(~pl.col("strand").is_in(["+", "-"])).height
-    if n_strandless:
+    # Strand. Counted in transcripts, not rows: a row count mixes transcripts
+    # with their exons and roughly doubles the figure, which reads as noise
+    # rather than as a fifth of the annotation.
+    transcripts = df.filter(pl.col("feature") == "transcript") if "feature" in df.columns else df
+    unstranded = transcripts.filter(~pl.col("strand").is_in(["+", "-"]))
+    ids = (
+        unstranded["transcript_id"].drop_nulls().unique(maintain_order=True).to_list()
+        if "transcript_id" in unstranded.columns
+        else []
+    )
+    report.unstranded_transcript_ids = ids
+    report.n_unstranded_transcripts = len(ids)
+    if ids:
+        # Counted here rather than from report.n_transcripts, which is not
+        # populated until later in this function.
+        total = transcripts.height
+        share = f" ({len(ids) / total:.1%})" if total else ""
         report.add(
             "STRAND_MISSING",
             "warning",
-            f"{n_strandless} rows have no strand (+/-); gffread skips or mishandles these.",
+            f"{len(ids)} transcript(s){share} have no strand (+/-). They are kept, but gffread "
+            "extracts the plus-strand sequence for them, so probes for any that are really on "
+            "the minus strand will be antisense and will not bind. Nothing downstream catches "
+            "this: the sequences pass every filter and fail only at the bench.",
+            fix="IDs are written to unstranded_transcripts.txt. Check your targets against it "
+            "before designing, and drop or replace any that appear. Single-exon transcripts "
+            "carry no splice signal, so strand cannot be recovered from the annotation alone.",
         )
 
     # seqname vs genome contigs - the classic chr1-vs-1/scaffold mismatch that
@@ -704,6 +730,15 @@ def ingest(
         # 3. Validate and report.
         report = validate_gtf(dest_gtf, plain_genome)
         (dataset_dir / "validation_report.json").write_text(report.model_dump_json(indent=2))
+        # Written even with --validate-only: knowing which targets are unsafe is
+        # the point of validating before committing to a build.
+        if report.unstranded_transcript_ids:
+            unstranded_path = dataset_dir / "unstranded_transcripts.txt"
+            unstranded_path.write_text("\n".join(report.unstranded_transcript_ids) + "\n")
+            logger.info(
+                f"{len(report.unstranded_transcript_ids)} unstranded transcript ID(s) "
+                f"written to {unstranded_path}."
+            )
         print_report(report, console)
         if not report.ok:
             raise click.ClickException(

@@ -81,3 +81,9 @@ All newer fields are optional and back-compatible:
 
 - `solar_intake.yaml`: provenance manifest — input sha256s, tool versions, the literal command run, and QC counts. Stub fields are completed by the operator.
 - `validation_report.json`: annotation/sequence validation results.
+- `unstranded_transcripts.txt`: written only when the annotation contains
+  transcripts with no strand. gffread keeps those but extracts the plus-strand
+  sequence, so probes for any that are really on the minus strand are antisense
+  and will not bind — and nothing downstream catches it, because the sequences
+  themselves are valid. Check your targets against this file before designing:
+  `comm -12 <(sort -u genes.txt) <(sort -u <dataset>/unstranded_transcripts.txt)`

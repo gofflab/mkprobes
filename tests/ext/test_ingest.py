@@ -329,3 +329,85 @@ class TestIngestEndToEnd:
             convert=False,
         )
         assert ds.check_kmers(rrna_seq)
+
+
+class TestUnstrandedTranscripts:
+    """
+    StringTie emits `.` for single-exon transcripts it cannot orient. gffread
+    keeps those but extracts the plus strand for them, so probes for any that
+    are really minus-strand are antisense and never bind - and nothing
+    downstream notices, because the sequence itself is valid.
+    """
+
+    def _gtf(self, tmp_path: Path, strands: list[str]) -> Path:
+        rows = []
+        for i, strand in enumerate(strands):
+            attrs = f'gene_id "g{i}"; transcript_id "t{i}";'
+            start, end = 100 + i * 200, 200 + i * 200
+            for feature in ("transcript", "exon"):
+                rows.append(f"chr1\ttest\t{feature}\t{start}\t{end}\t.\t{strand}\t.\t{attrs}")
+        path = tmp_path / "annotation.gtf"
+        path.write_text("\n".join(rows) + "\n")
+        return path
+
+    def _genome(self, tmp_path: Path) -> Path:
+        path = tmp_path / "genome.fa"
+        path.write_text(">chr1\n" + "ACGT" * 500 + "\n")
+        return path
+
+    def test_counts_transcripts_not_rows(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        # Two unstranded transcripts, each with an exon: four rows, two transcripts.
+        report = validate_gtf(self._gtf(tmp_path, [".", ".", "+"]), self._genome(tmp_path))
+
+        assert report.n_unstranded_transcripts == 2
+        strand_issue = next(i for i in report.issues if i.code == "STRAND_MISSING")
+        assert "2 transcript(s)" in strand_issue.message
+        assert "4 rows" not in strand_issue.message
+
+    def test_reports_the_share_of_the_annotation(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, [".", "+", "+", "-"]), self._genome(tmp_path))
+
+        strand_issue = next(i for i in report.issues if i.code == "STRAND_MISSING")
+        assert "25.0%" in strand_issue.message
+
+    def test_says_what_actually_happens(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["."]), self._genome(tmp_path))
+
+        message = next(i for i in report.issues if i.code == "STRAND_MISSING").message
+        # gffread keeps them and silently uses the plus strand; it does not skip.
+        assert "kept" in message
+        assert "skips" not in message
+        assert "antisense" in message
+
+    def test_collects_the_ids(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["+", ".", "-", "."]), self._genome(tmp_path))
+
+        assert report.unstranded_transcript_ids == ["t1", "t3"]
+
+    def test_ids_stay_out_of_the_json_report(self, tmp_path: Path):
+        import json
+
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["."] * 3), self._genome(tmp_path))
+
+        # There can be tens of thousands; they belong in their own file.
+        serialized = json.loads(report.model_dump_json())
+        assert "unstranded_transcript_ids" not in serialized
+        assert serialized["n_unstranded_transcripts"] == 3
+
+    def test_silent_when_every_transcript_is_stranded(self, tmp_path: Path):
+        from mkprobes.ext.ingest import validate_gtf
+
+        report = validate_gtf(self._gtf(tmp_path, ["+", "-", "+"]), self._genome(tmp_path))
+
+        assert report.n_unstranded_transcripts == 0
+        assert not [i for i in report.issues if i.code == "STRAND_MISSING"]
