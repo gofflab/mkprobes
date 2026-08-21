@@ -1,0 +1,9 @@
+[
+  {
+    "name": "golden",
+    "species": "octopus",
+    "codebook": "codebook.json",
+    "bcidx": 0,
+    "n_probes": 6
+  }
+]

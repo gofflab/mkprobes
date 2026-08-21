@@ -180,13 +180,21 @@ def run(
 
     # This is padlock.
     logger.info("Generating splint header.")
+    # `rand` and the `it` cycle below are shared across rows, so the order in
+    # which they are consumed decides the sequence each row gets. polars runs
+    # `map_elements` across threads, so drawing from them inside the UDF is not
+    # reproducible - repeated runs of the same panel emitted different oligos.
+    # Drawing here, in row order, reproduces exactly what the original single-
+    # threaded run produced, at any thread count.
     res = dfs.with_columns(
+        _head_splint=pl.Series(
+            [generate_head_splint(padlock, rand) for padlock in dfs["padlock"]], dtype=pl.Utf8
+        )
+    ).with_columns(
         pad_cut=(
             # head
             hfs[pad_idx, "header"][-3:]
-            + pl.col("padlock")
-            .map_elements(lambda x: generate_head_splint(x, rand), return_dtype=pl.Utf8)
-            .str.to_lowercase()
+            + pl.col("_head_splint").str.to_lowercase()
             + "ta"  # what the paper uses
             + pl.col("seq").map_elements(rc, return_dtype=pl.Utf8)
         ).map_elements(padpad, return_dtype=pl.Utf8)
@@ -203,16 +211,20 @@ def run(
         return "".join(islice(it, target - len(seq))) + seq
 
     # Splint
+    res = res.with_columns(
+        _spl_unpadded=(
+            # "TGTTGATGAGGTGTTGATGAATA"
+            pl.col("splint").map_elements(rc, return_dtype=pl.Utf8)
+            + "ca"
+            + pl.col("pad_cut").str.slice(0, 6).map_elements(rc, return_dtype=pl.Utf8)
+            + pl.col("pad_cut").str.slice(-6, 6).map_elements(rc, return_dtype=pl.Utf8)
+        )
+    )
     res = (
         res.with_columns(
-            spl_cut=(
-                # "TGTTGATGAGGTGTTGATGAATA"
-                pl.col("splint").map_elements(rc, return_dtype=pl.Utf8)
-                + "ca"
-                + pl.col("pad_cut").str.slice(0, 6).map_elements(rc, return_dtype=pl.Utf8)
-                + pl.col("pad_cut").str.slice(-6, 6).map_elements(rc, return_dtype=pl.Utf8)
-            ).map_elements(splint_pad, return_dtype=pl.Utf8)
-        )
+            # Padded in row order, for the reason given above the head splint.
+            spl_cut=pl.Series([splint_pad(s) for s in res["_spl_unpadded"]], dtype=pl.Utf8)
+        ).drop("_head_splint", "_spl_unpadded")
     ).filter(
         (
             pl.col("spl_cut")
