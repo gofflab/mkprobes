@@ -90,6 +90,7 @@ def run_gene(
     maxoverlap: int = DEFAULT_MAXOVERLAP,
     restriction: tuple[str, ...] = DEFAULT_RESTRICTION,
     target_probes: int = DEFAULT_TARGET_PROBES,
+    codebook_hash: str | None = None,
     **kwargs,
 ):
     """
@@ -142,6 +143,7 @@ def run_gene(
             codebook=codebook,
             restriction=list(restriction),
             target_probes=target_probes,
+            codebook_hash=codebook_hash,
             overwrite=overwrite,
         )
     except Exception as e:
@@ -171,7 +173,13 @@ def run_panel(
     Returns {"done": [...], "skipped": [...], "failed": [...]}. Failed genes
     are also appended to `<codebook>.failed.txt` (recreated per run).
     """
+    from .codebook.codebook import hash_codebook_file
+
     codebook = load_worklist(codebook_path)
+    # From the file, not the worklist: load_worklist drops Blank codes, and
+    # hashing the filtered dict yields a different value from the one
+    # make-codebook reported.
+    codebook_hash = hash_codebook_file(codebook_path)
     acceptable = load_acceptable(codebook_path, allow_file)
     if acceptable:
         logger.info(f"Acceptable off-targets loaded for {len(acceptable)} gene(s).")

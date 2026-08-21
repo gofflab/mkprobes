@@ -326,9 +326,18 @@ def make_codebook_cli(
 
     out = out or genes.with_suffix(".codebook.json")
     out.write_text(json.dumps(codebook, indent=2))
+
+    # Written beside the codebook, not just logged: the hash identifies which
+    # codebook produced a given panel, and a log line is gone as soon as the
+    # terminal scrolls. A sidecar rather than a key inside the JSON, which every
+    # consumer iterates as {target: bits} and would read as an extra target.
+    digest = hash_codebook(codebook)
+    hash_path = out.with_suffix(".hash")
+    hash_path.write_text(digest + "\n")
+
     n_blanks = sum(k.startswith("Blank") for k in codebook)
     logger.info(
         f"Codebook written to {out}: {len(codebook) - n_blanks} targets + {n_blanks} blanks, "
-        f"hash {hash_codebook(codebook)}"
+        f"hash {digest} (also in {hash_path.name})"
         + (" (expression-informed)" if expression is not None else " (seeded assignment)")
     )
