@@ -1,6 +1,5 @@
 # %%
 import gzip
-import shlex
 import shutil
 import subprocess
 import tarfile
@@ -22,7 +21,9 @@ url_files = {
     "human": Path(__file__).parent / "humanurls.tsv",
 }
 
-Gtfs = NamedTuple("gtfs", [("ensembl", ExternalData), ("gencode", ExternalData)])
+class Gtfs(NamedTuple):
+    ensembl: ExternalData
+    gencode: ExternalData
 
 
 class NecessaryFiles(TypedDict):
@@ -123,7 +124,12 @@ def run_jellyfish(path: Path | str):
 def run_repeatmasker(fasta: Path | str, species: str, threads: int = 16):
     fasta = Path(fasta)
     subprocess.run(
-        shlex.split(f'RepeatMasker -norna -pa {threads} -norna -species "{species}" {fasta.as_posix()}'),
+        # Argument list: splitting the formatted string broke any path
+        # containing a space.
+        [
+            "RepeatMasker", "-norna", "-pa", str(threads), "-norna",
+            "-species", species, fasta.as_posix(),
+        ],
         check=True,
     )
 
