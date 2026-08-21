@@ -181,7 +181,7 @@ def run_screen(
 
 
 @click.command()
-@click.argument("output_dir", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
+@click.argument("output_path", type=click.Path(exists=True, dir_okay=True, file_okay=False, path_type=Path))
 @click.argument("gene", type=str)
 @click.option(
     "--fpkm-path",
@@ -209,7 +209,7 @@ def run_screen(
 )
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
 def screen(
-    output_dir: str,
+    output_path: str,
     gene: str,
     fpkm_path: Path | str | None = None,
     overlap: int = -2,
@@ -220,7 +220,7 @@ def screen(
 ):
     """Filter and tile a target's candidate probes.
 
-    OUTPUT_DIR is the directory `mkprobes candidates` wrote to, not your
+    OUTPUT_PATH is the directory `mkprobes candidates` wrote to, not your
     dataset: this reads `<gene>_crawled.parquet` from it and writes the
     screened set back beside it.
     """
@@ -233,7 +233,7 @@ def screen(
         raise click.BadParameter(str(e), param_hint="--restriction") from e
 
     run_screen(
-        output_dir,
+        output_path,
         gene,
         fpkm_path=fpkm_path,
         overlap=overlap,

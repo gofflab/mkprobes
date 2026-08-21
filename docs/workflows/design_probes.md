@@ -92,14 +92,15 @@ when the dataset carries one.
 mkprobes screen panel_a/output Sox2 --minimum 60 --maxoverlap 20 --overwrite
 ```
 
-Note the first argument is the **output directory**, not the dataset — this
-step works on the files `candidates` wrote.
+`OUTPUT_PATH` is the directory `candidates` wrote to — this step works on
+the files it left there.
 
 - `--minimum` — probes to aim for. Drives the adaptive overlap search.
 - `-l, --overlap` — a fixed overlap. `--minimum` overrides it.
 - `--maxoverlap` — how far the search may go to reach `--minimum`.
 - `--restriction` — comma-separated. See the warning below.
-- `--fpkm_path` — expression table used for weighting.
+- `--fpkm-path` — expression table used for weighting. Also accepted as
+  `--fpkm_path`, the older spelling.
 
 ### 3. Construct — attach the readouts
 
