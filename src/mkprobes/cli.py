@@ -102,12 +102,36 @@ def prepare(path: Path, species: Literal["human", "mouse"], threads: int = 16):
 
 
 @main.command()
-@click.argument("path", type=click.Path(dir_okay=False, file_okay=True, path_type=Path))
-def hash(path: Path):
-    """Hash codebook"""
-    from .codebook.codebook import hash_codebook
+@click.argument("path", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path))
+@click.option(
+    "--write",
+    "write_sidecar",
+    is_flag=True,
+    help="Also write the hash to <codebook>.hash, as make-codebook does. Use this on a "
+    "codebook made before mkprobes wrote the sidecar; it does not alter the codebook.",
+)
+def hash(path: Path, write_sidecar: bool):
+    """Print a codebook's hash, the stable identifier for that set of bit assignments."""
+    from .codebook.codebook import hash_codebook_file
 
-    print(hash_codebook(json.loads(path.read_text())))
+    digest = hash_codebook_file(path)
+    click.echo(digest)
+
+    if not write_sidecar:
+        return
+    sidecar = path.with_suffix(".hash")
+    if sidecar.exists() and (previous := sidecar.read_text().strip()) != digest:
+        # The sidecar is meant to identify the codebook beside it, so it is
+        # updated - but a mismatch means the codebook was edited after the
+        # sidecar was written, and anything designed in between belongs to
+        # neither hash.
+        logger.warning(
+            f"{sidecar.name} held {previous}, but {path.name} now hashes to {digest}. "
+            "The codebook changed after the sidecar was written; outputs designed against "
+            "the old one carry the old hash."
+        )
+    sidecar.write_text(digest + "\n")
+    logger.info(f"Hash written to {sidecar}.")
 
 
 @main.command()
