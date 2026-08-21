@@ -529,21 +529,71 @@ class ReferenceDataset(Dataset):
             return None
 
 
+REFERENCE_SPECIES: tuple[str, ...] = ("human", "mouse")
+
+
+def _has_reference_build(path: Path) -> bool:
+    """
+    Whether `mkprobes prepare` has populated this folder.
+
+    `gencode.gtf.gz` is written only by the reference download and is required by
+    `ReferenceDataset`, so its presence is an unambiguous marker.
+    """
+    return (path / "gencode.gtf.gz").exists()
+
+
 def load_dataset(path: Path | str) -> "Dataset | ReferenceDataset":
     """
     Resolve a dataset path into either a generic dataset or a reference dataset.
 
+    A `ReferenceDataset` screens candidates against pseudogenes, allows a gene's
+    Ensembl isoforms as acceptable binders, and carries `transcript_name`. The
+    generic `Dataset` does none of that, so resolving a human/mouse run to the
+    generic path costs specificity. This function therefore never picks the
+    generic path for a reference species without saying so.
+
     Resolution order:
-    1. If `dataset.json` exists, load as a generic `Dataset` (custom species).
-    2. If the folder name is `human` or `mouse`, load as a `ReferenceDataset`.
-    3. Otherwise fail with guidance on how to create a dataset.
+    1. Both a `dataset.json` and a reference build present: ambiguous, raise.
+    2. `dataset.json` exists: generic `Dataset` (warns for a reference species).
+    3. Folder is named `human` or `mouse`: `ReferenceDataset`.
+    4. Otherwise fail with guidance on how to create a dataset.
     """
     path = Path(path)
-    if (path / "dataset.json").exists():
-        return Dataset.from_folder(path)
+    has_definition = (path / "dataset.json").exists()
 
-    if path.name in ("human", "mouse"):
+    if has_definition and _has_reference_build(path):
+        raise ValueError(
+            f"{path} contains both a `dataset.json` (custom dataset) and a downloaded "
+            "human/mouse reference build (gencode.gtf.gz), so it is ambiguous which one "
+            "you meant to design against. Keep the two apart: either delete "
+            f"`{path / 'dataset.json'}` to use the reference build, or re-run `mkprobes "
+            "ingest` into a directory that does not hold a reference build."
+        )
+
+    if has_definition:
+        dataset = Dataset.from_folder(path)
+        if dataset.species in REFERENCE_SPECIES:
+            logger.warning(
+                f"{path} is a custom {dataset.species} dataset, so probe design will use the "
+                "generic path: no pseudogene screening, and only sibling isoforms named in the "
+                "GTF are treated as acceptable binders. For the full reference behaviour, build "
+                f"the reference with `mkprobes prepare <dir> --species {dataset.species}` and "
+                "design against that directory instead."
+            )
+        return dataset
+
+    if path.name in REFERENCE_SPECIES:
         return ReferenceDataset(path)
+
+    if _has_reference_build(path):
+        # `ReferenceDataset` infers the species from the directory name, so a
+        # reference build under any other name cannot be loaded as one.
+        raise ValueError(
+            f"{path} holds a human/mouse reference build (gencode.gtf.gz), but the reference "
+            "loader takes the species from the directory name, which must be exactly `human` "
+            f"or `mouse` - this one is {path.name!r}. Rename or move it, e.g. to "
+            f"`{path.parent / 'mouse'}`, and design against that path."
+        )
 
     raise FileNotFoundError(
         f"Path {path} is not a recognized probe dataset. Expected a `dataset.json` "
