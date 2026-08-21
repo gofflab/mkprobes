@@ -255,8 +255,14 @@ def run(
     def double_digest(s: str) -> str:
         return BamHI.catalyze(KpnI.catalyze(Seq.Seq(s))[1])[0].__str__()
 
+    # These guard the molecule that gets synthesized, so they are raised rather
+    # than asserted: `python -O` would strip an assert and ship the bad oligo.
     for s, r in zip(res["spl_cut"], res["pad_cut"]):
-        assert test_splint_padlock(s, r, lengths=(6, 6)), (s, r)
+        if not test_splint_padlock(s, r, lengths=(6, 6)):
+            raise ValueError(
+                "Splint does not template the padlock's ends (6 nt each side), so the "
+                f"padlock could not be circularised.\n  splint:  {s}\n  padlock: {r}"
+            )
 
     out: pl.DataFrame = res.with_columns(
         # restriction scar already accounted for
@@ -265,9 +271,19 @@ def run(
     ).with_columns(splintcons=pl.col("splintcons").map_elements(backfill, return_dtype=pl.Utf8))
 
     for s, r in zip(out["splintcons"], out["padlockcons"]):
-        assert test_splint_padlock(*map(double_digest, (s, r)), lengths=(6, 6)), (s, r)
+        if not test_splint_padlock(*map(double_digest, (s, r)), lengths=(6, 6)):
+            raise ValueError(
+                "After the KpnI/BamHI double digest the splint no longer templates the "
+                f"padlock's ends.\n  splint:  {s}\n  padlock: {r}"
+            )
 
-    assert (out["padlockcons"].str.len_chars().is_between(139, 150)).all()
+    lengths = out["padlockcons"].str.len_chars()
+    if not lengths.is_between(139, 150).all():
+        raise ValueError(
+            f"Padlock oligos must be 139-150 nt to synthesize; got "
+            f"{lengths.min()}-{lengths.max()} nt. The header/footer table and the "
+            "probe length have to agree - check --headerfooter."
+        )
 
     from .codebook.codebook import hash_codebook
 

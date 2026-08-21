@@ -14,11 +14,24 @@ from ..candidates import _run_bowtie
 from ..ext.dataset import Dataset, ReferenceDataset, load_dataset
 from ..starmap.starmap import rotate, test_splint_padlock
 from ..utils.provenance import provenance_metadata
+from ..utils.sequtils import reject_ambiguous_bases
 from ..utils.sequtils import reverse_complement as rc
 
 READOUTS: Final[dict[int, str]] = {
     x["id"]: x["seq"] for x in pl.read_csv(Path(__file__).parent / "readout_ref_filtered.csv").to_dicts()
 }
+
+
+def _check_pad_start(name: str, pad_start: int) -> None:
+    """
+    The padlock arm has to begin past position 17, or there is no room for the
+    readouts. Raised rather than asserted so `python -O` cannot strip it.
+    """
+    if pad_start <= 17:
+        raise ValueError(
+            f"Probe {name} has its padlock arm starting at {pad_start}, but readout "
+            "attachment needs it past 17. Re-run screening for this target."
+        )
 
 
 def assign_overlap(
@@ -60,15 +73,19 @@ def construct_idt(seq_encoding: pl.DataFrame, idxs: Sequence[int]):
             raise ValueError("Homopolymers")
 
         splint = s[0] + (footer := "ta" + rc(out_pad[:6]) + rc(out_pad[-6:]))
-        assert test_splint_padlock(footer[2:], out_pad), out_pad
-        assert 46 <= len(out_pad) <= 48, len(out_pad)
+        # Raised, not asserted: `python -O` would strip these and emit a padlock
+        # that cannot circularise.
+        if not test_splint_padlock(footer[2:], out_pad):
+            raise ValueError(f"Splint does not template the padlock's ends: {out_pad}")
+        if not 46 <= len(out_pad) <= 48:
+            raise ValueError(f"Padlock payload must be 46-48 nt, got {len(out_pad)}: {out_pad}")
         return splint, out_pad
 
     assert len(idxs) == 1
     out = dict(name=[], code=[], cons_pad=[], cons_splint=[], seq=[])
 
     for name, splint, pad, pad_start in seq_encoding[["name", "splint", "padlock", "pad_start"]].iter_rows():
-        assert pad_start > 17
+        _check_pad_start(name, pad_start)
 
         out["name"].append(name)  # f"{name};;{sep}{','.join(map(str,codes))}")
         out["code"].append(idxs[0])
@@ -100,7 +117,7 @@ def construct_encoding(
 
     for name, pad, pad_start in seq_encoding[["name", "padlock", "pad_start"]].iter_rows():
         # for codes, _ in zip(perms, range(4)):
-        assert pad_start > 17
+        _check_pad_start(name, pad_start)
         for sep, codes in zip(["AA", "TA", "AT", "TT"], perms):
             stitched = stitch(pad, codes, sep=sep)
             stitched_upper = stitched.upper()
@@ -213,7 +230,7 @@ def construct(
     logger.debug(f"Using {scr_path} for {transcript}.")
     logger.debug(f"Screened probes: {len(screened)}")
 
-    assert not screened["seq"].str.contains("N").any()
+    reject_ambiguous_bases(screened, "screening")
     # acceptable_tss = pl.read_csv(next(output_path.glob(f"{transcript}_acceptable_tss.csv")))[
     #     "transcript_id"
     # ].to_list()
@@ -241,7 +258,11 @@ def construct(
     )
 
     logger.info(f"Constructed {len(res)} probes for {transcript}.")
-    assert res["seq"].is_not_null().all()
+    if res["seq"].is_null().any():
+        raise ValueError(
+            f"{res['seq'].is_null().sum()} constructed probe(s) for {transcript} have no "
+            "sequence. The screened input and the codebook disagree about this target."
+        )
 
     final_path.parent.mkdir(exist_ok=True, parents=True)
     res.write_parquet(

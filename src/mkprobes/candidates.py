@@ -18,6 +18,7 @@ from .utils._filtration import PROBE_CRITERIA, visualize_probe_coverage
 from .utils.provenance import encode, provenance_metadata, provenance_record
 from .utils.samframe import SAMFrame
 from .utils.seqcalc import hp, tm
+from .utils.sequtils import reject_ambiguous_bases
 
 try:
     profile  # type: ignore
@@ -430,7 +431,7 @@ def _run_transcript(
 
     logger.info(f"Generated {len(ff)} candidates.")
 
-    assert not ff["seq"].str.contains("N").any()
+    reject_ambiguous_bases(ff, "candidate generation")
     prov = provenance_record(
         dataset.path,
         stage="candidates",
@@ -616,7 +617,7 @@ def _run_transcript_generic(
 
     logger.info(f"Generated {len(ff)} candidates.")
 
-    assert not ff["seq"].str.contains("N").any()
+    reject_ambiguous_bases(ff, "candidate generation")
     prov = provenance_record(
         dataset.path,
         stage="candidates",

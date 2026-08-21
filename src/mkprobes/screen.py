@@ -13,7 +13,7 @@ from loguru import logger
 from .utils._filtration import the_filter, visualize_probe_coverage
 from .utils.provenance import encode, provenance_record
 from .utils.samframe import SAMFrame
-from .utils.sequtils import probe_identity_exprs
+from .utils.sequtils import probe_identity_exprs, reject_ambiguous_bases
 
 sys.setrecursionlimit(5000)
 
@@ -47,7 +47,7 @@ def _screen(
         logger.info(f"Filtered {initial_len - len(ff)} probes with restriction sites.")
 
     final, stats_filter = the_filter(ff, overlap=overlap)
-    assert not final["seq"].str.contains("N").any(), "N appears out of nowhere."
+    reject_ambiguous_bases(final, "screening")
 
     final = final.with_columns(probe_identity_exprs())
     final = (

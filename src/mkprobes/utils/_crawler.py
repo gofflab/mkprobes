@@ -2,7 +2,7 @@ import polars as pl
 from loguru import logger
 
 from .seqcalc import Model, hp, tm
-from .sequtils import gc_content
+from .sequtils import gc_content, reject_ambiguous_bases
 
 
 def crawler(
@@ -87,7 +87,7 @@ def crawler(
 
     df = pl.DataFrame(dict(name=names, seq=seqs, pos_start=poss_start, pos_end=poss_end))
     ret = df.filter(~pl.col("seq").str.contains("|".join(to_avoid)))
-    assert not df["seq"].str.contains("N").any()
+    reject_ambiguous_bases(df, "tiling")
     fail_reasons["homopolymer"] = len(df) - len(ret)
     logger.debug(str(fail_reasons))
 
