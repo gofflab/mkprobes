@@ -3,6 +3,10 @@ name: docs
 on:
   push:
     branches: [main]
+  # The docs build imports the package (sphinx-click renders the CLI reference
+  # from the live command tree), so a code change can break it. Building on
+  # pull requests catches that before merge instead of after.
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,7 +15,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,6 +38,8 @@ jobs:
           path: docs/_build/html
 
   deploy:
+    # Pull requests build the docs but must not publish them.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
