@@ -59,5 +59,6 @@ workflows/dataflow_map
 reference/cli
 reference/columns
 reference/file_formats
+reference/fidelity
 glossary
 ```
