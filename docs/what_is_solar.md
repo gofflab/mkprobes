@@ -42,12 +42,12 @@ padlock and locks around the target site.
 SOLAR uses a **splint/padlock pair** — two separately synthesised oligos per
 site, working together:
 
-- The **padlock** carries one target-binding arm (roughly 18–28 nucleotides in
+- The **padlock** carries one target-binding arm (18–27 nucleotides in
   practice, taken from the 5' side of the chosen window on the transcript),
   followed by the **readout** sequences that encode gene identity.
-- The **splint** carries its own target-binding arm, which lands on the
-  transcript immediately next to the padlock's arm — the software leaves a gap
-  of only a couple of nucleotides between the two arms. The splint's other end
+- The **splint** carries its own target-binding arm (18–29 nucleotides), which
+  lands on the transcript immediately next to the padlock's arm — the two arms
+  are separated by at most one nucleotide. The splint's other end
   is a 12-nucleotide clamp (6 nucleotides plus 6 nucleotides) that base-pairs
   with the padlock's 5' end and 3' end at the same time, pulling them
   nose-to-tail so ligase can join them.
@@ -132,7 +132,8 @@ readouts per gene instead gives you "N choose 3" distinguishable patterns:
 Those numbers are the exact row counts of the code matrices vendored inside
 the package. The codebook generator picks the smallest code whose capacity
 exceeds your gene count by at least 5%, so a 300-gene panel lands on a
-16-bit code (560 codewords) and a 1000-gene panel on a 20-bit code.
+14-bit code (364 codewords) and a 1000-gene panel on a 20-bit code
+(1140 codewords).
 
 Two more things the generator does, worth knowing because they show up in the
 file it writes:
@@ -195,8 +196,8 @@ capacity is left blank.
 ```text
   1. Pick a window on the target transcript and split it into two arms
 
-     target RNA  5'---------[  arm 1  ]--[  arm 2  ]---------------3'
-                                                (a 0-2 nt gap between arms)
+     target RNA  5'---------[  arm 1  ]-[  arm 2  ]----------------3'
+                                        ^ 0 or 1 nt between the arms
 
   2. Two oligos bind that window. The padlock covers one arm and trails
      its three readouts; the splint covers the other arm AND clamps the

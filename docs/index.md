@@ -22,10 +22,17 @@ The workflow at a glance:
 New species? Start with the flagship runbook:
 [SOLAR probesets for a new species](workflows/solar_new_species.md).
 
+New to the assay itself? Read
+[What SOLAR is and what these probes do](what_is_solar.md) first, then
+[Before you start](before_you_start.md) for prerequisites and machine
+requirements.
+
 ```{toctree}
 :maxdepth: 1
 :caption: Start here
 
+what_is_solar
+before_you_start
 installation
 getting_started
 troubleshooting
@@ -50,5 +57,7 @@ workflows/dataflow_map
 :caption: Reference
 
 reference/cli
+reference/columns
 reference/file_formats
+glossary
 ```
