@@ -90,6 +90,14 @@ Details: {doc}`workflows/build_a_dataset`. Non-model species from end to end:
 
 Two commands: check that the names exist, then pick one transcript per gene.
 
+:::{tip}
+Have expression data and room left in the panel? `mkprobes suggest-targets` can
+propose genes that add information your current list does not already carry, and
+score how much of the biology the panel captures. Optional, and it reads your
+expression data rather than the dataset — see
+{doc}`workflows/choose_your_targets`.
+:::
+
 ```bash
 mkprobes chkgenes data/mouse panel_a/genes.txt
 mkprobes convert-to-transcripts data/mouse panel_a/genes.converted.txt

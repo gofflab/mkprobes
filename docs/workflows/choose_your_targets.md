@@ -28,6 +28,58 @@ Naming a target twice is a hard error, not a warning: the duplicate would
 claim a second set of readout bits and silently corrupt the codebook. Order is
 preserved, because it feeds bit assignment.
 
+## Optional: let expression data fill out the panel
+
+Skip this section if you already know every gene you want.
+
+A panel has room for a fixed number of genes, and a hand-picked list tends to
+cluster: markers chosen for the same cell type report much the same thing, so
+the panel measures one axis of the biology several times over and misses
+others. If you have expression data for the tissue — your own, or a published
+atlas — `suggest-targets` proposes genes that carry information your current
+choices do not.
+
+```bash
+mkprobes suggest-targets atlas.h5ad --add 40 --have genes.txt -o genes.txt
+```
+
+It regresses every candidate gene against the ones you already hold, then picks
+the genes that best span whatever variation is left over. It also reports how
+much of the data's structure the panel captures, before and after, so the
+suggestion comes with a number rather than only a list:
+
+```text
+Panel of 43 captures 38.5% of the variance in the top 30 PCs
+  (up from 6.8% with your 3 alone).
+```
+
+The output is an ordinary target list with your genes first, in order, followed
+by the suggestions. **Read it and edit it.** These are candidates ranked by a
+statistical criterion, not by whether they make biological sense, are expressed
+highly enough to detect, or matter to your question.
+
+:::{important}
+Filter your expression data to informative genes first — scanpy's
+`highly_variable_genes` is the usual route.
+
+A gene that correlates with nothing looks maximally independent to this method,
+so unfiltered data makes it prefer genes that are merely noisy over genes that
+report real biology. The effect is not subtle: on test data where 8 latent
+programmes were present, adding a few hundred unstructured genes changed the
+result from covering most programmes to picking nothing but noise.
+
+The command checks for this and warns when the suggestions look like noise, but
+the check is a backstop, not a substitute for filtering.
+:::
+
+Two options are worth knowing. `--layer` chooses which expression matrix to use,
+if your file has more than one — normalized, log-transformed values usually work
+better than raw counts. `--n-components` sets how many dimensions of the
+leftover variation to select against; it defaults to `--add + 20` (minimum 50),
+and lowering it helps when your data has only a few distinct programmes. The
+choice materially changes which genes come out, so it is worth trying a couple
+of values and comparing the variance-capture numbers.
+
 ## 1. Check the names
 
 ```bash

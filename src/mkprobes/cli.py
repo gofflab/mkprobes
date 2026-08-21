@@ -16,6 +16,7 @@ from .genes.chkgenes import chkgenes, convert_to_transcripts, transcripts
 from .init_project import check_manifest_cli, init
 from .run_panel import run_panel_cli
 from .screen import screen
+from .select_targets import suggest_targets
 from .utils._alignment import bowtie_build
 from .utils.logging import setup_logging
 
@@ -133,6 +134,7 @@ main.add_command(run_panel_cli)
 main.add_command(assemble)
 main.add_command(init)
 main.add_command(check_manifest_cli)
+main.add_command(suggest_targets)
 
 
 if __name__ == "__main__":
