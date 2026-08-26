@@ -13,6 +13,9 @@ Conventions used across the SOLAR (splint/padlock, STARmap-style) probe-design w
 - Candidate tables: parquet files (`*_crawled.parquet`, `*_all.parquet`, `*_bowtie.parquet`).
 - Screened sets: parquet (`*_screened_ol*.parquet`).
 - Final constructed probes: parquet (`*_final_*.parquet`).
+- Oligo pool: plain text (`<name>_final.txt`), one oligo per line, splint and
+  padlock alternating. Its region-by-region structure is specified in
+  {doc}`seqspec`, and `mkprobes validate-pool` checks a pool against it.
 
 Every parquet the pipeline writes carries a provenance record in its parquet
 key/value metadata: package version, UTC timestamp, the command line, the

@@ -1,0 +1,65 @@
+# Structure of the SOLAR readout (detection) probes - the oligos washed in and
+# imaged, as opposed to the pool oligos that are ordered and hybridized.
+#
+# GENERATED FILE - edit scripts/generate_seqspec.py and re-run it instead.
+#
+# These are not designed by mkprobes. They are the fixed vendored table of 49
+# orthogonal 20-nt sequences in codebook/readout_ref_filtered.csv, three of
+# which the construct step stitches onto every padlock for a gene. Each
+# detection oligo carries a fluorophore conjugate, which is chemistry rather
+# than sequence and so appears only in the description here.
+#
+# Orientation, which is easy to get backwards. The construct step stitches
+# `rc(readout)` onto the screened padlock, but assembly then reverse-
+# complements that whole payload, so the ORDERED padlock carries the readout
+# exactly as the table lists it - which is what `mkprobes validate-pool`
+# matches against. Rolling-circle amplification copies the padlock circle as a
+# template, so the amplicon presents the reverse complement, and a detection
+# oligo that hybridizes to the amplicon therefore carries the table sequence
+# itself. That is what this file describes.
+seqspec_version: 0.3.0
+doi: ''
+date: 26 August 2026
+modalities:
+- dna
+lib_struct: ''
+library_protocol: spatial transcriptomics (NTR:0000761)
+sequence_protocol: Custom
+sequence_kit: Custom
+sequence_spec: []
+assay_id: mkprobes-solar-readout-probes
+name: SOLAR readout (detection) probes
+description: The 49 orthogonal 20-nt readout sequences SOLAR images against, numbered 1-49 in the vendored
+  table. A detection oligo is one of these sequences carrying a fluorophore. Rolling-circle amplification
+  copies the padlock circle, so the amplicon presents the reverse complement of the readout on the padlock,
+  in hundreds of tandem copies, and the detection oligo hybridizes to it. A gene's codebook entry names
+  the three readout IDs stitched onto that gene's padlocks; the order they appear in varies from probe
+  to probe.
+library_kit: fluorophore-conjugated detection oligos, one 20-nt sequence each
+library_spec:
+- region_id: dna
+  region_type: dna
+  name: SOLAR readout (detection) probe
+  sequence_type: joined
+  sequence: NNNNNNNNNNNNNNNNNNNN
+  min_len: 20
+  max_len: 20
+  onlist: null
+  regions:
+  - region_id: readout_probe
+    region_type: barcode
+    name: readout sequence, 20 nt from the vendored table of 49; the fluorophore conjugate is not sequence
+      and is not represented
+    sequence_type: onlist
+    sequence: NNNNNNNNNNNNNNNNNNNN
+    min_len: 20
+    max_len: 20
+    onlist:
+      file_id: solar_readouts.txt
+      filename: solar_readouts.txt
+      filetype: txt
+      filesize: 1029
+      url: solar_readouts.txt
+      urltype: local
+      md5: 852728578a0c1ea1d12861c15a3bc90b
+    regions: []

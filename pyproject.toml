@@ -37,10 +37,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Drawing a seqspec (`mkprobes draw-spec`). Optional because designing and
+# ordering a panel never needs it.
+viz = ["dna_features_viewer>=3.1"]
 dev = [
     "pytest>=8.4.1",
     "pytest-mock>=3.14.1",
     "ruff",
+    # The reference implementation, used to check the vendored specs still
+    # conform. Not needed to validate a pool, which reads them as plain YAML.
+    "seqspec>=0.4.0",
+    "dna_features_viewer>=3.1",
 ]
 
 [project.scripts]

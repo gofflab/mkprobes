@@ -14,6 +14,7 @@ from .ext.dataset import Dataset, create_dataset
 from .ext.ingest import ingest
 from .genes.chkgenes import chkgenes, convert_to_transcripts, transcripts
 from .init_project import check_manifest_cli, init
+from .oligospec import draw_spec_cli, validate_pool_cli
 from .run_panel import run_panel_cli
 from .screen import screen
 from .select_targets import suggest_targets
@@ -141,6 +142,8 @@ main.add_command(assemble)
 main.add_command(init)
 main.add_command(check_manifest_cli)
 main.add_command(suggest_targets)
+main.add_command(validate_pool_cli)
+main.add_command(draw_spec_cli)
 
 
 if __name__ == "__main__":

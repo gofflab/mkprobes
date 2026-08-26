@@ -1,0 +1,422 @@
+# Structure of the SOLAR splint/padlock oligo pool for bcidx 83, as
+# assembled by `mkprobes assemble`. Validate a pool against it with
+# `mkprobes validate-pool`, and draw it with `mkprobes draw-spec`.
+#
+# GENERATED FILE - edit scripts/generate_seqspec.py and re-run it instead.
+# Every fixed sequence below is derived from rows 166 and 167 of
+# data/headerfooter.csv, the padding constants in assembly.py, and
+# codebook/readout_ref_filtered.csv.
+#
+# `bcidx` picks the two primer pairs that amplify this probe set, so panels
+# pooled together can each be amplified on their own:
+#
+#   splint  forward CGAGGGCAAAGCGGTAC      reverse TAGGGAGAGTTATAGGGTTGGATC
+#   padlock forward ACCTCGTTCGCTGGTAC      reverse TAGGGAGAGTTATCTTCGAGGATC
+#
+# Each oligo reads 5'->3' as written. The forward primer has the same sense as
+# the sequence below; the reverse primer is the reverse complement of the 3'
+# binding site, so it primes back toward the 5' end.
+#
+# The index reaches further than the primers, which is why there is a whole
+# spec per index rather than a note about two regions. Ten regions change with
+# it: both primer binding sites on each oligo, the KpnI and BamHI scars those
+# sites leave behind on the working probe, and the splint's clamp - which has
+# to template the padlock's actual ends, and those ends are the scars. A pool
+# validated against the wrong index therefore fails at the ligation junction,
+# not only at the primers. Everything else - arms, readouts, spacers, backfill
+# - is identical across indices.
+#
+# Three properties of the pool this file cannot state, which
+# `mkprobes validate-pool` checks instead:
+#
+#   1. Each entry is a probe PAIR. `splint_oligo` and `padlock_oligo` are two
+#      separately synthesized 148-nt molecules, not one 296-nt strand, and they
+#      alternate down the ordered pool file: splint, padlock, splint, ...
+#      seqspec has no way to say "sibling regions are separate molecules", so
+#      they are nested under one `dna` region.
+#   2. Variable regions co-vary to a constant total. On the splint,
+#      pad + arm = 33 nt; on the padlock, arm + fill = 27 nt. seqspec sums
+#      child ranges independently, so the parents below carry the wider sums
+#      while every real oligo is exactly 148 nt.
+#   3. The three readouts on a padlock must be that gene's codeword, in any
+#      order. Any three of the 49 satisfy this file; only the codebook says
+#      which three are right, so that check needs the codebook JSON.
+#
+# seqspec has no field for strand, so the fact that the 3' sites are read in
+# the opposite direction lives in their region names and descriptions - and in
+# the arrows `mkprobes draw-spec` draws.
+seqspec_version: 0.3.0
+doi: ''
+date: 26 August 2026
+modalities:
+- dna
+lib_struct: ''
+library_protocol: spatial transcriptomics (NTR:0000761)
+sequence_protocol: Custom
+sequence_kit: Custom
+sequence_spec: []
+assay_id: mkprobes-solar-oligo-pool-bcidx83
+name: SOLAR splint/padlock oligo pool (bcidx 83)
+description: 'Array-synthesized oligo pool for SOLAR (splint/padlock, STARmap-style) spatial transcriptomics,
+  as assembled by `mkprobes assemble` with bcidx 83. Every probe pair is two 148-nt DNA oligos. Each is
+  flanked by the primer binding sites that amplify this probe set: a forward site at the 5'' end ending
+  in a KpnI site, and a reverse site at the 3'' end opening with a BamHI site. The reverse primer is the
+  reverse complement of that 3'' region and primes back toward the 5'' end. Once amplified, the KpnI/BamHI
+  double digest trims both sites off and releases the working probes. bcidx 83 sets those four sites,
+  the restriction scars they leave on the working probe, and the splint clamp that templates the padlock''s
+  ends. The working padlock carries one target-homology arm followed by the gene''s three 20-nt readouts;
+  the working splint carries the other arm plus a 6+6-nt clamp that holds the padlock''s ends together
+  for ligation. Case in the assembled pool files is cosmetic.'
+library_kit: array-synthesized oligo pool, two 148-nt oligos per probe pair
+library_spec:
+- region_id: dna
+  region_type: dna
+  name: 'SOLAR probe pair: two separately synthesized 148-nt oligos'
+  sequence_type: joined
+  sequence: TTCCACTAACTCACATGTCATGCATTATCTTCTATACCTCTGAGCAGATCAGTAGTCCGAGGGCAAAGCGGTACCTAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXCAXXXTTGCCACTGGATCCAACCCTATAACTCTCCCTAACCTCGTTCGCTGGTACCAAXXXTAXXXXXXXXXXXXXXXXXXXXXXXXXXXNNNNNNNNNNNNNNNNNNNNXXNNNNNNNNNNNNNNNNNNNNXXNNNNNNNNNNNNNNNNNNNNXXXXXXXXXATCAGTGGGATCCTCGAAGATAACTCTCCCTA
+  min_len: 276
+  max_len: 316
+  onlist: null
+  regions:
+  - region_id: splint_oligo
+    region_type: named
+    name: splint oligo as ordered
+    sequence_type: joined
+    sequence: TTCCACTAACTCACATGTCATGCATTATCTTCTATACCTCTGAGCAGATCAGTAGTCCGAGGGCAAAGCGGTACCTAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXCAXXXTTGCCACTGGATCCAACCCTATAACTCTCCCTA
+    min_len: 137
+    max_len: 159
+    onlist: null
+    regions:
+    - region_id: splint_backfill
+      region_type: linker
+      name: length-equalizing filler, discarded with the 5' handle
+      sequence_type: fixed
+      sequence: TTCCACTAACTCACATGTCATGCATTATCTTCTATACCTCTGAGCAGATCAGTAGTC
+      min_len: 57
+      max_len: 57
+      onlist: null
+      regions: []
+    - region_id: splint_primer_5p
+      region_type: custom_primer
+      name: '5'' primer binding site: the forward primer has this same sequence and extends toward the
+        3'' end'
+      sequence_type: fixed
+      sequence: CGAGGGCAAAGC
+      min_len: 12
+      max_len: 12
+      onlist: null
+      regions: []
+    - region_id: splint_kpni_site
+      region_type: linker
+      name: KpnI restriction site GGTAC^C, cut at its far end. These five bases are discarded with the
+        5' handle; only the C that follows stays on the probe
+      sequence_type: fixed
+      sequence: GGTAC
+      min_len: 5
+      max_len: 5
+      onlist: null
+      regions: []
+    - region_id: splint_probe
+      region_type: named
+      name: working splint, released by the KpnI + BamHI double digest
+      sequence_type: joined
+      sequence: CTAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXCAXXXTTGCCACTG
+      min_len: 39
+      max_len: 61
+      onlist: null
+      regions:
+      - region_id: splint_kpni_retained
+        region_type: linker
+        name: the single base of the KpnI site GGTAC^C left on the working probe. The other five leave
+          with the 5' handle, so the site is positioned to scar the part that gets thrown away
+        sequence_type: fixed
+        sequence: C
+        min_len: 1
+        max_len: 1
+        onlist: null
+        regions: []
+      - region_id: splint_spacer_5p
+        region_type: linker
+        name: spacer between the KpnI cut and the A/T pad
+        sequence_type: fixed
+        sequence: TA
+        min_len: 2
+        max_len: 2
+        onlist: null
+        regions: []
+      - region_id: splint_pad
+        region_type: linker
+        name: A/T filler from the cycling ATAAT pad; pad + arm = 33 nt
+        sequence_type: random
+        sequence: XXXXXXXXXXXXXXX
+        min_len: 4
+        max_len: 15
+        onlist: null
+        regions: []
+      - region_id: splint_arm
+        region_type: cdna
+        name: splint target-homology arm, reverse complement of the 3' half of the transcript window
+        sequence_type: random
+        sequence: XXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+        min_len: 18
+        max_len: 29
+        onlist: null
+        regions: []
+      - region_id: splint_linker_ca
+        region_type: linker
+        name: CA linker
+        sequence_type: fixed
+        sequence: CA
+        min_len: 2
+        max_len: 2
+        onlist: null
+        regions: []
+      - region_id: splint_clamp_var
+        region_type: linker
+        name: clamp, the 3 nt templating the padlock's head splint
+        sequence_type: random
+        sequence: XXX
+        min_len: 3
+        max_len: 3
+        onlist: null
+        regions: []
+      - region_id: splint_clamp_fix
+        region_type: linker
+        name: clamp, the 3 nt templating the padlock's KpnI scar
+        sequence_type: fixed
+        sequence: TTG
+        min_len: 3
+        max_len: 3
+        onlist: null
+        regions: []
+      - region_id: splint_clamp_3p
+        region_type: linker
+        name: clamp, the 6 nt templating the padlock's 3' end. Its final base is the one base of the BamHI
+          site G^GATCC kept on the working probe - not split out as its own region, because these six
+          are the unit that has to clamp the padlock
+        sequence_type: fixed
+        sequence: CCACTG
+        min_len: 6
+        max_len: 6
+        onlist: null
+        regions: []
+    - region_id: splint_bamhi_site
+      region_type: linker
+      name: BamHI restriction site G^GATCC, cut at its near end. The G that completes it is the last base
+        of the clamp above; these five are discarded with the 3' handle
+      sequence_type: fixed
+      sequence: GATCC
+      min_len: 5
+      max_len: 5
+      onlist: null
+      regions: []
+    - region_id: splint_primer_3p
+      region_type: custom_primer
+      name: '3'' primer binding site, read on the opposite strand: the reverse primer is this region''s
+        reverse complement and extends back toward the 5'' end'
+      sequence_type: fixed
+      sequence: AACCCTATAACTCTCCCTA
+      min_len: 19
+      max_len: 19
+      onlist: null
+      regions: []
+  - region_id: padlock_oligo
+    region_type: named
+    name: padlock oligo as ordered
+    sequence_type: joined
+    sequence: ACCTCGTTCGCTGGTACCAAXXXTAXXXXXXXXXXXXXXXXXXXXXXXXXXXNNNNNNNNNNNNNNNNNNNNXXNNNNNNNNNNNNNNNNNNNNXXNNNNNNNNNNNNNNNNNNNNXXXXXXXXXATCAGTGGGATCCTCGAAGATAACTCTCCCTA
+    min_len: 139
+    max_len: 157
+    onlist: null
+    regions:
+    - region_id: padlock_primer_5p
+      region_type: custom_primer
+      name: '5'' primer binding site: the forward primer has this same sequence and extends toward the
+        3'' end'
+      sequence_type: fixed
+      sequence: ACCTCGTTCGCT
+      min_len: 12
+      max_len: 12
+      onlist: null
+      regions: []
+    - region_id: padlock_kpni_site
+      region_type: linker
+      name: KpnI restriction site GGTAC^C, cut at its far end. These five bases are discarded with the
+        5' handle; only the C that follows stays on the probe
+      sequence_type: fixed
+      sequence: GGTAC
+      min_len: 5
+      max_len: 5
+      onlist: null
+      regions: []
+    - region_id: padlock_probe
+      region_type: named
+      name: working padlock, released by the double digest and circularized on the target
+      sequence_type: joined
+      sequence: CAAXXXTAXXXXXXXXXXXXXXXXXXXXXXXXXXXNNNNNNNNNNNNNNNNNNNNXXNNNNNNNNNNNNNNNNNNNNXXNNNNNNNNNNNNNNNNNNNNXXXXXXXXXATCAGTGG
+      min_len: 98
+      max_len: 116
+      onlist: null
+      regions:
+      - region_id: padlock_kpni_retained
+        region_type: linker
+        name: the single base of the KpnI site GGTAC^C left on the working probe. The other five leave
+          with the 5' handle, so the site is positioned to scar the part that gets thrown away. First
+          of the 6 nt the splint clamp templates
+        sequence_type: fixed
+        sequence: C
+        min_len: 1
+        max_len: 1
+        onlist: null
+        regions: []
+      - region_id: padlock_spacer_5p
+        region_type: linker
+        name: spacer completing, with the retained base, the 6 nt the splint clamp templates
+        sequence_type: fixed
+        sequence: AA
+        min_len: 2
+        max_len: 2
+        onlist: null
+        regions: []
+      - region_id: padlock_head_splint
+        region_type: linker
+        name: head splint, 3 nt drawn from A/C/T to minimize hairpins
+        sequence_type: random
+        sequence: XXX
+        min_len: 3
+        max_len: 3
+        onlist: null
+        regions: []
+      - region_id: padlock_spacer_ta
+        region_type: linker
+        name: TA spacer
+        sequence_type: fixed
+        sequence: TA
+        min_len: 2
+        max_len: 2
+        onlist: null
+        regions: []
+      - region_id: padlock_arm
+        region_type: cdna
+        name: padlock target-homology arm, reverse complement of the 5' half of the transcript window;
+          arm + fill = 27 nt
+        sequence_type: random
+        sequence: XXXXXXXXXXXXXXXXXXXXXXXXXXX
+        min_len: 18
+        max_len: 27
+        onlist: null
+        regions: []
+      - region_id: padlock_readout_1
+        region_type: barcode
+        name: 'readout in position 1 of 3: one of the gene''s three codebook bits, 20 nt from the vendored
+          table of 49. Which of the three lands here varies per probe'
+        sequence_type: onlist
+        sequence: NNNNNNNNNNNNNNNNNNNN
+        min_len: 20
+        max_len: 20
+        onlist: &id001
+          file_id: solar_readouts.txt
+          filename: solar_readouts.txt
+          filetype: txt
+          filesize: 1029
+          url: solar_readouts.txt
+          urltype: local
+          md5: 852728578a0c1ea1d12861c15a3bc90b
+        regions: []
+      - region_id: padlock_spacer_1
+        region_type: linker
+        name: A/T spacer between readouts
+        sequence_type: random
+        sequence: XX
+        min_len: 2
+        max_len: 2
+        onlist: null
+        regions: []
+      - region_id: padlock_readout_2
+        region_type: barcode
+        name: 'readout in position 2 of 3: one of the gene''s three codebook bits, 20 nt from the vendored
+          table of 49. Which of the three lands here varies per probe'
+        sequence_type: onlist
+        sequence: NNNNNNNNNNNNNNNNNNNN
+        min_len: 20
+        max_len: 20
+        onlist: *id001
+        regions: []
+      - region_id: padlock_spacer_2
+        region_type: linker
+        name: A/T spacer between readouts
+        sequence_type: random
+        sequence: XX
+        min_len: 2
+        max_len: 2
+        onlist: null
+        regions: []
+      - region_id: padlock_readout_3
+        region_type: barcode
+        name: 'readout in position 3 of 3: one of the gene''s three codebook bits, 20 nt from the vendored
+          table of 49. Which of the three lands here varies per probe'
+        sequence_type: onlist
+        sequence: NNNNNNNNNNNNNNNNNNNN
+        min_len: 20
+        max_len: 20
+        onlist: *id001
+        regions: []
+      - region_id: padlock_fill
+        region_type: linker
+        name: length-equalizing filler, truncated from the right; arm + fill = 27 nt
+        sequence_type: random
+        sequence: XXXXXXXXX
+        min_len: 0
+        max_len: 9
+        onlist: null
+        regions: []
+      - region_id: padlock_linker_at
+        region_type: linker
+        name: AT linker
+        sequence_type: fixed
+        sequence: AT
+        min_len: 2
+        max_len: 2
+        onlist: null
+        regions: []
+      - region_id: padlock_ligation_3p
+        region_type: linker
+        name: first half of the 6 nt at the padlock's 3' end that the splint clamp templates; the reverse
+          complement of the splint footer's first three bases
+        sequence_type: fixed
+        sequence: CAG
+        min_len: 3
+        max_len: 3
+        onlist: null
+        regions: []
+      - region_id: padlock_ligation_end
+        region_type: linker
+        name: second half of the 6 nt the splint clamp templates, and the padlock's 3' terminus. Its final
+          base is the one base of the BamHI site G^GATCC kept on the working probe; the other five leave
+          with the 3' handle
+        sequence_type: fixed
+        sequence: TGG
+        min_len: 3
+        max_len: 3
+        onlist: null
+        regions: []
+    - region_id: padlock_bamhi_site
+      region_type: linker
+      name: BamHI restriction site G^GATCC, cut at its near end. The G that completes it is the padlock's
+        last base; these five are discarded with the 3' handle
+      sequence_type: fixed
+      sequence: GATCC
+      min_len: 5
+      max_len: 5
+      onlist: null
+      regions: []
+    - region_id: padlock_primer_3p
+      region_type: custom_primer
+      name: '3'' primer binding site, read on the opposite strand: the reverse primer is this region''s
+        reverse complement and extends back toward the 5'' end'
+      sequence_type: fixed
+      sequence: TCGAAGATAACTCTCCCTA
+      min_len: 19
+      max_len: 19
+      onlist: null
+      regions: []
