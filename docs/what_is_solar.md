@@ -259,6 +259,8 @@ produced it.
 
 ## Where to go next
 
+- The same construct, region by region and machine-readable, plus how to check
+  a pool against it: {doc}`reference/seqspec`
 - Practical prerequisites, reference files, and machine requirements:
   {doc}`before_you_start`
 - Every term used above, defined once: {doc}`glossary`

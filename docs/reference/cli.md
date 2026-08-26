@@ -20,7 +20,9 @@ order and explains what each one is for.
 | 6. assembly | `check-manifest`, then `assemble short` / `assemble gen` | {doc}`../workflows/order_your_oligos` |
 
 Supporting commands, usable at any point: `provenance` (how was this file
-made?), `hash` (codebook identity), `transcripts` (one-off transcript lookup).
+made?), `hash` (codebook identity), `transcripts` (one-off transcript lookup),
+`validate-pool` (check an assembled pool against the {doc}`seqspec`, before you
+order it) and `draw-spec` (draw the construct).
 
 ## Things worth knowing before you read the list
 

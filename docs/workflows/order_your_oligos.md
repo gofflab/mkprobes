@@ -139,6 +139,19 @@ Under `panel_a/generated/`:
 ordering, and why there are two oligos per site, is explained in
 {doc}`../what_is_solar`.
 
+## Check it before you order
+
+```bash
+mkprobes validate-pool panel_a/generated/panel_a_final.txt -c panel_a/codebook.json
+```
+
+This checks the pool file itself against the machine-readable
+{doc}`../reference/seqspec`: every oligo's structure and length, no restriction
+site where the digest would destroy the probe, splints and padlocks that can
+actually circularise each other, and — with `--codebook` — that no `Blank`
+codeword was synthesised. It takes seconds and is the last point at which a
+mistake costs nothing.
+
 ## On a cluster
 
 - Run `short` first as a cheap gate.

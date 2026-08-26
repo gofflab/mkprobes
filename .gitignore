@@ -12,5 +12,8 @@ docs/_build/
 
 !src/mkprobes/codebook/readout_ref_filtered.csv
 !src/mkprobes/data/**
+# ...but that negation re-includes everything under data/, .DS_Store included,
+# so it has to be excluded again below the line that unignored it.
+src/mkprobes/data/**/.DS_Store
 /data/
 .vscode/

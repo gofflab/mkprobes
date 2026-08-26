@@ -80,6 +80,7 @@ workflows/dataflow_map
 reference/cli
 reference/columns
 reference/file_formats
+reference/seqspec
 reference/fidelity
 glossary
 ```

@@ -1,0 +1,4 @@
+# Written by scripts/generate_seqspec.py, one per bcidx. Marking them as
+# generated collapses them by default in pull request diffs, so a review
+# shows the code and the docs rather than a hundred near-identical files.
+src/mkprobes/data/seqspec/*.seqspec.yaml linguist-generated=true
