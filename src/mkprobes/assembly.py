@@ -12,6 +12,7 @@ CLI: ``mkprobes assemble <manifest.json> {short|gen}``.
 """
 
 import json
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -32,6 +33,7 @@ from loguru import logger
 
 from .codebook.codebook import ProbeSet
 from .constants import RESTRICTION_TOKEN
+from .design import matches_recorded
 from .starmap.starmap import generate_head_splint, test_splint_padlock
 from .utils._alignment import gen_fasta
 from .utils.provenance import encode, provenance_record, read_provenance
@@ -85,6 +87,10 @@ def run(
     cols = []
     bads = []
     lows = []
+    # Targets whose construct output records design settings other than the
+    # manifest's. The manifest is the panel's statement of how it was designed,
+    # so a pool built from files that disagree with it is worth a loud warning.
+    off_manifest: list[str] = []
 
     design_source: Path | None = None
 
@@ -103,6 +109,10 @@ def run(
         except FileNotFoundError as e:
             logger.critical(e)
             continue
+
+        recorded = (read_provenance(final) or {}).get("design")
+        if not matches_recorded(probeset.design, recorded):
+            off_manifest.append(ts)
 
         if len(df) < toolow:
             bads.append({"name": ts, "count": len(df)})
@@ -137,27 +147,54 @@ def run(
         rm_taxon = None
         logger.info("RepeatMasker skipped (--skip-repeatmasker).")
     if rm_taxon:
+        if shutil.which("RepeatMasker") is None:
+            raise FileNotFoundError(
+                f"RepeatMasker is not on PATH, so the probes cannot be masked for {rm_taxon!r}. "
+                "Install it (conda install -c bioconda repeatmasker) or pass --skip-repeatmasker."
+            )
         with ThreadPoolExecutor() as exc:
+            runs = []
             for col_name in ["splint", "padlock"]:
                 (outpath / f"{col_name}.fasta").write_text(gen_fasta(dfs[col_name]).getvalue())
                 # Argument list, not shell=True with an interpolated path: a
                 # dataset directory containing a space became several arguments,
                 # and the taxon reached a shell unescaped.
-                exc.submit(
-                    subprocess.run,
-                    [
-                        "RepeatMasker", "-pa", "16", "-norna", "-s", "-no_is",
-                        "-species", rm_taxon,
-                        str(outpath / f"{col_name}.fasta"),
-                    ],
-                    check=True,
+                runs.append(
+                    exc.submit(
+                        subprocess.run,
+                        [
+                            "RepeatMasker", "-pa", "16", "-norna", "-s", "-no_is",
+                            "-species", rm_taxon,
+                            str(outpath / f"{col_name}.fasta"),
+                        ],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
                 )
+            # Collected, not fire-and-forget: a failed RepeatMasker used to be
+            # swallowed by the executor, and the run went on to fail later with
+            # a polars error that said nothing about RepeatMasker.
+            for run_ in runs:
+                try:
+                    run_.result()
+                except subprocess.CalledProcessError as e:
+                    raise RuntimeError(
+                        f"RepeatMasker failed for species {rm_taxon!r}:\n{(e.stderr or e.stdout or '').strip()[-2000:]}"
+                    ) from e
 
-        dfs = dfs.with_columns({
-            col_name: [seq for name, seq in pyfastx.Fastx((outpath / f"{col_name}.fasta.masked").as_posix())]
-            for col_name in ["splint", "padlock"]
-            if (outpath / f"{col_name}.fasta.masked").exists()
-        }).filter(~pl.col("splint").str.contains("N") & ~pl.col("padlock").str.contains("N"))
+        masked: dict[str, list[str]] = {}
+        for col_name in ["splint", "padlock"]:
+            masked_path = outpath / f"{col_name}.fasta.masked"
+            if masked_path.exists():
+                masked[col_name] = [seq for _, seq in pyfastx.Fastx(masked_path.as_posix())]
+            else:
+                # RepeatMasker writes no .masked file when nothing in the input
+                # matched a repeat; the sequences then stand as they are.
+                logger.info(f"RepeatMasker found no repeats in the {col_name}s; nothing masked.")
+        if masked:
+            dfs = dfs.with_columns(**{name: pl.Series(name, seqs) for name, seqs in masked.items()})
+        dfs = dfs.filter(~pl.col("splint").str.contains("N") & ~pl.col("padlock").str.contains("N"))
     elif not skip_repeatmasker:
         logger.warning(
             f"No RepeatMasker taxon for species {probeset.species!r}; skipping. "
@@ -172,6 +209,15 @@ def run(
     if len(lows):
         msg = f"Low count genes.\n{pl.DataFrame(lows).sort('count')}"
         logger.warning(msg)
+
+    if off_manifest:
+        logger.warning(
+            f"{len(off_manifest)} target(s) were designed under settings other than the "
+            f"manifest's design block ({probeset.design.describe()}): "
+            f"{', '.join(off_manifest[:10])}{' ...' if len(off_manifest) > 10 else ''}. "
+            "The pool is built from them as they are. To design the panel under the manifest, "
+            "re-run `mkprobes run-panel ... --overwrite`; to keep them, update the manifest."
+        )
 
     # Before
     spl_idx = idx * 2

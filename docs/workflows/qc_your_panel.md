@@ -57,9 +57,14 @@ For each target below threshold, in rough order of what to try:
    not mind labelling, `--allow` it — or use the interactive triage in
    {doc}`order_your_oligos`, which records your decisions in
    `codebook.acceptable.json` and lets `run-panel` apply them automatically.
-4. **Loosen screening.** Raise `--maxoverlap` so probes may overlap slightly
-   to reach the count.
-5. **Drop the target.** Sometimes the honest answer. Remove it from the target
+4. **Loosen screening.** Raise `max_overlap` in the manifest's `design` block
+   (or `--maxoverlap`) so probes may overlap slightly to reach the count.
+   Construct builds from the overlap that reached it.
+5. **Revisit the thermodynamics.** If the whole panel is thin and the species
+   is AT-rich, the crawler and split-arm thresholds are discarding most of
+   each transcript. See [Design settings](design_probes.md#design-settings)
+   for what each one buys, and what it costs at the bench.
+6. **Drop the target.** Sometimes the honest answer. Remove it from the target
    list, regenerate the codebook, and re-run — do not simply delete it from
    the codebook by hand.
 

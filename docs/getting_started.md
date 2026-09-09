@@ -39,7 +39,7 @@ This writes a directory that is already valid:
 | File | What it is |
 | --- | --- |
 | `genes.txt` | Your targets, one per line. Edit this first. |
-| `manifest.json` | Describes the panel for the assembly step, with every field commented. |
+| `manifest.json` | Describes the panel: the design settings `run-panel` uses and the assembly fields, every one commented. |
 | `README.md` | The same commands as below, filled in with your paths. |
 
 Start here rather than hand-writing `manifest.json`. The manifest has two

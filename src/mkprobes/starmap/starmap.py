@@ -4,7 +4,7 @@ import numpy as np
 import polars as pl
 import primer3
 
-from ..utils.seqcalc import hp, tm
+from ..utils.seqcalc import hp, primer3_lock, tm
 from ..utils.sequtils import reverse_complement as rc
 
 
@@ -151,10 +151,14 @@ class STARPrimers:
 
     @staticmethod
     def check_primer(seq: str):
-        if not primer3.calc_homodimer_tm(seq) < 40:
-            raise ValueError(primer3.calc_homodimer_tm(seq))
-        if not primer3.calc_hairpin_tm(seq) < 40:
-            raise ValueError(primer3.calc_hairpin_tm(seq))
+        # primer3 is not safe to enter from two threads; see `primer3_lock`.
+        with primer3_lock:
+            homodimer = primer3.calc_homodimer_tm(seq)
+            hairpin = primer3.calc_hairpin_tm(seq)
+        if not homodimer < 40:
+            raise ValueError(homodimer)
+        if not hairpin < 40:
+            raise ValueError(hairpin)
 
     def __post_init__(self):
         if not len(self.bsa_hang) == 1:

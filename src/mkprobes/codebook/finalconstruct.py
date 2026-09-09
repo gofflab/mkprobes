@@ -1,7 +1,8 @@
 # %%
 import json
+import re
 from collections.abc import Callable, Collection, Iterable, Sequence
-from itertools import chain, cycle, permutations
+from itertools import cycle, permutations
 from pathlib import Path
 from typing import Annotated, Final, cast
 
@@ -11,6 +12,7 @@ from Bio import Restriction, Seq
 from loguru import logger
 
 from ..candidates import _run_bowtie
+from ..design import ResolvedDesign
 from ..ext.dataset import Dataset, load_dataset
 from ..starmap.starmap import rotate, test_splint_padlock
 from ..utils.provenance import provenance_metadata
@@ -35,26 +37,38 @@ def _check_pad_start(name: str, pad_start: int) -> None:
         )
 
 
-def assign_overlap(
-    output: Path | str,
-    gene: str,
-    *,
-    target_probes: int = 16,
-    max_overlap: int = 5,
-    restriction: str = "BsaI",
-) -> int:
-    if max_overlap % 5 != 0 or max_overlap < 0:
-        raise ValueError("max_overlap must be a multiple of 5")
+def screened_overlaps(output: Path | str, gene: str, restriction: str = "") -> dict[int, Path]:
+    """
+    Every screened file for a gene, keyed by the overlap it was tiled at.
+
+    `restriction` is the filename token, e.g. `_BamHIKpnI`, or empty.
+    """
     output = Path(output)
-    for ol in chain((-2,), range(5, max_overlap + 1, 5)):
-        df = pl.read_parquet(output / f"{gene}_screened_ol{ol}{restriction}.parquet")
-        if len(df) >= target_probes:
-            return ol
+    pattern = re.compile(rf"^{re.escape(gene)}_screened_ol(-?\d+){re.escape(restriction)}\.parquet$")
+    found: dict[int, Path] = {}
+    for path in output.glob(f"{gene}_screened_ol*{restriction}.parquet"):
+        match = pattern.match(path.name)
+        if match:
+            found[int(match.group(1))] = path
+    return found
 
-    # if len(df) >= min_probes:  # type: ignore
-    return ol  # type: ignore
 
-    # raise ValueError(f"Gene {gene} cannot be fixed")
+def pick_screened_overlap(output: Path | str, gene: str, restriction: str = "") -> int:
+    """
+    The overlap `screen` settled on for a gene.
+
+    `run_screen` tries overlaps in increasing order and stops at the first
+    that reaches `--minimum`, clearing older files before it starts, so the
+    largest overlap on disk is the one that reached the target, or the furthest
+    the search got. Before this, `construct` always read the no-overlap file,
+    which made `--maxoverlap` produce files that nothing consumed.
+    """
+    found = screened_overlaps(output, gene, restriction)
+    if not found:
+        raise FileNotFoundError(
+            f"No screened probes for {gene} in {output}. Run `mkprobes screen` on this target first."
+        )
+    return max(found)
 
 
 def stitch(seq: str, codes: Sequence[int], sep: str = "TT") -> str:
@@ -165,6 +179,7 @@ def check_offtargets(dataset: Dataset, constructed: pl.DataFrame, acceptable_tss
 @click.option("--codebook", "-c", required=True, type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path), help="Codebook JSON assigning readout bits to each target.")
 @click.option("--target-probes", "--target_probes", "-N", type=int, help="Maximum number of probes per gene", default=72, show_default=True)
 @click.option("--restriction", multiple=True, type=str, help="Restriction enzymes to exclude sites for. Repeatable.")
+@click.option("--overlap", type=int, default=None, help="Which screened file to build from, by its overlap. Default: the overlap `screen` settled on (the largest present).")
 # fmt: on
 def click_construct(
     path: Path,
@@ -173,11 +188,14 @@ def click_construct(
     codebook: Path,
     target_probes: int = 72,
     restriction: list[str] | str | None = None,
+    overlap: int | None = None,
 ):
     """Attach readout sequences to screened probes for one target.
 
     Reads that target's screened probes from OUTPUT_PATH and writes
-    `<target>_final_<enzymes>_<bits>.parquet` beside them.
+    `<target>_final_<enzymes>_<bits>.parquet` beside them. When `screen` ran
+    with `--minimum`, the screened file at the overlap that reached it is the
+    one used.
     """
     from ..constants import validate_restriction
 
@@ -194,6 +212,7 @@ def click_construct(
         target_probes=target_probes,
         restriction=restriction,
         codebook_hash=hash_codebook_file(codebook),
+        overlap=overlap,
     )
 
 
@@ -208,7 +227,16 @@ def construct(
     codebook_hash: str | None = None,
     construction_function: Callable[[pl.DataFrame, Collection[int]], pl.DataFrame] = construct_encoding,
     overwrite: bool = False,
+    overlap: int | None = None,
+    design: ResolvedDesign | None = None,
 ):
+    """
+    Attaches readouts to a target's screened probes.
+
+    `overlap` names the screened file to build from; `None` takes the one
+    `screen` settled on. `design` is recorded in the output's provenance so
+    assembly can tell whether a panel was designed under its manifest.
+    """
     output_path = Path(output_path)
     if isinstance(restriction, (list, tuple)) and restriction:
         restriction = "_" + "".join(restriction)
@@ -225,12 +253,17 @@ def construct(
     #     logger.critical(f"Codebook for {transcript} has changed.")
     # exit(1)
 
-    # assign_overlap(output_path, transcript, target_probes=target_probes, restriction=restriction)
-    overlap = -2
-    screened = pl.read_parquet(
-        scr_path := output_path / f"{transcript}_screened_ol{overlap}{restriction}.parquet"
-    )
-    logger.debug(f"Using {scr_path} for {transcript}.")
+    if overlap is None:
+        overlap = pick_screened_overlap(output_path, transcript, restriction)
+    scr_path = output_path / f"{transcript}_screened_ol{overlap}{restriction}.parquet"
+    if not scr_path.exists():
+        available = sorted(screened_overlaps(output_path, transcript, restriction))
+        raise FileNotFoundError(
+            f"No screened probes for {transcript} at overlap {overlap}"
+            + (f"; screened files exist for overlap {available}." if available else ".")
+        )
+    screened = pl.read_parquet(scr_path)
+    logger.info(f"Building {transcript} from {scr_path.name} (overlap {overlap}).")
     logger.debug(f"Screened probes: {len(screened)}")
 
     reject_ambiguous_bases(screened, "screening")
@@ -282,6 +315,8 @@ def construct(
             # `restriction` has already been folded into its filename form here.
             restriction=restriction.lstrip("_") or None,
             target_probes=target_probes,
+            overlap=overlap,
+            design=design.model_dump(mode="json") if design else None,
         ),
     )
     # res.write_csv(final_path.with_suffix(".tsv"), separator="\t")  # deal with nested data

@@ -35,14 +35,24 @@ Useful flags:
 | --- | --- | --- |
 | `-j, --workers` | 16 | parallel worker processes |
 | `-o, --output` | `output/` beside the codebook | where per-target files go |
-| `--minimum` | 60 | minimum probes per gene at the screen stage |
-| `--maxoverlap` | 0 | how much probe overlap to allow when reaching `--minimum` |
-| `--target-probes` | 48 | maximum probes per gene at the construct stage |
+| `--manifest` | `manifest.json` beside the codebook | where the panel's design settings are read from |
+| `--minimum` | 60 | probes per gene the screen aims for |
+| `--maxoverlap` | 0 | how far probes may overlap (nt, multiples of 5) to reach `--minimum` |
+| `--tm-range` | `54,68` | crawler Tm window, °C at the design formamide |
+| `--length-range` | `43,55` mouse/human, `43,54` otherwise | probe length window, nt (60 at most) |
+| `--split-tm` | 60 | Tm each arm of the split probe must reach, °C |
+| `--target-probes` | 48 | recorded in provenance; the pool cap is `n_probes` in the manifest |
 | `--allow-file` | `<codebook>.acceptable.json` | per-gene acceptable off-targets |
 | `--list-failed` | — | list targets with no final output, then exit |
 | `--list-failed-all` | — | the same, plus each one's top off-target counts |
 
 Match `--workers` to the CPUs you were actually allocated.
+
+The five design settings (`--minimum` through `--split-tm`) live in the
+manifest's `design` block, and that is where a panel's values belong: see
+[Design settings](#design-settings) below. A flag given on the command line
+overrides the manifest for that run, and the run log says which came from
+where.
 
 ## Triaging what failed
 
@@ -79,6 +89,9 @@ in the transcriptome each one would bind.
   biological reason.
 - `--pseudogene-limit` — how many pseudogene hits to tolerate.
 - `--overwrite` — redo an existing output.
+- `--tm-range`, `--length-range`, `--split-tm` — the thermodynamic settings,
+  as on `run-panel`. Candidates left over from a run under other settings are
+  redone rather than reused.
 
 On custom datasets: `--allow`/`--disallow` take **transcript IDs** (the FASTA
 record IDs), not gene names. Sibling isoforms of the target's own gene are
@@ -95,9 +108,13 @@ mkprobes screen panel_a/output Sox2 --minimum 60 --maxoverlap 20 --overwrite
 `OUTPUT_PATH` is the directory `candidates` wrote to — this step works on
 the files it left there.
 
-- `--minimum` — probes to aim for. Drives the adaptive overlap search.
+- `--minimum` — probes to aim for. Drives the adaptive overlap search: the
+  screen tiles at no overlap first, then at 5, 10, ... nt of overlap until
+  the count is reached or `--maxoverlap` is hit, writing one
+  `_screened_ol<N>_` file per overlap tried.
 - `-l, --overlap` — a fixed overlap. `--minimum` overrides it.
-- `--maxoverlap` — how far the search may go to reach `--minimum`.
+- `--maxoverlap` — how far the search may go to reach `--minimum`. Note the
+  default differs here (20) from `run-panel` (0).
 - `--restriction` — comma-separated. See the warning below.
 - `--fpkm-path` — expression table used for weighting. Also accepted as
   `--fpkm_path`, the older spelling.
@@ -112,8 +129,13 @@ Both `--gene` and `--codebook` are **required**. This reads that target's
 screened probes from the output directory and writes
 `<target>_final_<enzymes>_<bits>.parquet` beside them.
 
-- `-N, --target-probes` — maximum probes per gene (default 72 here; `run-panel`
-  passes 48). Also accepted as `--target_probes`, the older spelling.
+- `--overlap` — which screened file to build from, by its overlap. Left out,
+  it takes the one the screen settled on: the largest overlap present, which
+  is the first that reached `--minimum`. Before this, construct always read
+  the no-overlap file, so `--maxoverlap` produced files nothing used.
+- `-N, --target-probes` — recorded in the output's provenance. The number of
+  probes that reach the pool is capped by `n_probes` in the manifest at
+  assembly, not here. Also accepted as `--target_probes`, the older spelling.
 - `--restriction` — see below.
 
 ## About `--restriction`
@@ -134,6 +156,58 @@ mkprobes screen    ... --restriction BamHI,KpnI                 # comma-separate
 mkprobes run-panel ... --restriction BamHI,KpnI                 # comma-separated
 mkprobes construct ... --restriction BamHI --restriction KpnI   # repeatable
 ```
+
+## Design settings
+
+Five settings decide how many probes a target can yield before any off-target
+check runs. They were calibrated on mammalian transcripts at about 50% GC,
+and they are the reason an AT-rich transcriptome (cephalopods sit near 36%
+GC) returns thin panels: a window that cannot reach the Tm floor within the
+length cap is dropped, and only local GC-rich islands yield candidates.
+
+They live in the manifest, one block per probe set, so a panel is designed
+and assembled under one recorded set of values. `mkprobes init` writes the
+block with the defaults filled in:
+
+```json
+"design": {
+  "tm_range": [54, 68],
+  "length_range": [43, 54],
+  "split_tm": 60,
+  "min_probes": 60,
+  "max_overlap": 0
+}
+```
+
+| Setting | What it does | Lever on AT-rich transcripts |
+| --- | --- | --- |
+| `tm_range` | Tm window (°C at the design formamide) a probe must fall in | lower the floor to admit probes that bind less tightly |
+| `length_range` | probe length window, nt | raise the cap (60 at most) so a window can grow long enough to reach the Tm floor |
+| `split_tm` | Tm each arm of the split probe must reach | the largest lever, and the one to lower with the most care: both arms must bind for ligation |
+| `min_probes` | probes per gene the screen aims for | |
+| `max_overlap` | how far neighbouring probes may overlap to reach `min_probes` | 10 or 20 buys probes without touching thermodynamics |
+
+Delete a field to keep its default. `run-panel` reads the block for the
+probe set that names its codebook (a `manifest.json` beside the codebook, or
+`--manifest`), a flag overrides one setting for one run, and `assemble`
+warns when a target's output was designed under anything other than the
+manifest's block. Different panels in one manifest can carry different
+blocks.
+
+Measured on a 17.9 kb octopus transcript at 34% GC, with off-target
+screening on:
+
+| Settings | Screened pairs |
+| --- | --- |
+| defaults | 58 |
+| `split_tm` 55 | 67 |
+| `split_tm` 55, `length_range` 43–60, `tm_range` 50–68 | 126 |
+| defaults, `max_overlap` 20 | 80 |
+
+Widening the GC window does nothing (GC is not the check that fails), and
+lowering the formamide alone makes things worse. Every thermodynamic change
+alters how the probes hybridise at the bench, so treat the manifest block as
+a decision about chemistry, not a knob to turn until the count looks right.
 
 ## What lands in the output directory
 
@@ -183,8 +257,12 @@ different rules. Prefer re-running the whole panel with `--overwrite`.
   (a short isoform gives few candidates), then look at the off-target table.
 - **Outputs skipped that you wanted redone** — `--overwrite`, or name the
   single gene as the third argument to `run-panel`.
-- **Sparse probe counts on many targets** — loosen `--minimum` /
-  `--maxoverlap`, or accept verified homologs with `--allow`.
+- **Sparse probe counts on many targets** — on an AT-rich transcriptome, the
+  [design settings](#design-settings) are the cause; otherwise raise
+  `max_overlap`, or accept verified homologs with `--allow`.
+- **Changing the design block did nothing** — finished targets are skipped.
+  The run warns which were designed under other settings; pass `--overwrite`
+  to redesign them.
 - **Zero probes for a multi-isoform gene on a custom dataset** — should not
   happen, siblings are auto-allowed. If it does, inspect
   `<target>_offtarget_counts.csv` for a homolog and `--allow` it.

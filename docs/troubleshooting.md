@@ -55,6 +55,11 @@ the flag.
 - **Very low probe counts** — inspect the target's `_crawled.stats.json`, or
   run `mkprobes run-panel ... --list-failed-all` for the off-target picture.
   One dominant cross-reactive binder is a different problem from diffuse loss.
+  Thin counts across a whole AT-rich panel are the thermodynamic thresholds:
+  see the design settings section of {doc}`workflows/design_probes`.
+- **Editing the manifest's `design` block changed nothing** — finished targets
+  are skipped. The run names the ones designed under other settings; re-run
+  with `--overwrite`.
 - **Outputs skipped unexpectedly** — finished targets are skipped by design.
   Re-run with `--overwrite`, or name a single gene as the third argument to
   `run-panel` to force just that one.

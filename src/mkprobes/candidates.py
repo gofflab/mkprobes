@@ -8,6 +8,7 @@ import pyfastx
 from loguru import logger
 
 from .constants import GOOD_SPECIES
+from .design import DesignParameters, ResolvedDesign, design_from_flags, design_options
 from .ext.dataset import Dataset, ReferenceDataset, load_dataset
 from .ext.external_data import ExternalData, MockGTF
 from .genes.chkgenes import get_transcripts
@@ -15,7 +16,7 @@ from .starmap.starmap import split_probe
 from .utils._alignment import gen_fasta
 from .utils._crawler import crawler
 from .utils._filtration import PROBE_CRITERIA, visualize_probe_coverage
-from .utils.provenance import encode, provenance_metadata, provenance_record
+from .utils.provenance import encode, provenance_metadata, provenance_record, read_provenance
 from .utils.samframe import SAMFrame
 from .utils.seqcalc import hp, tm
 from .utils.sequtils import reject_ambiguous_bases
@@ -94,7 +95,14 @@ def get_candidates(
     allow: list[str] | None = None,
     disallow: list[str] | None = None,
     pseudogene_limit: int = -1,
+    design: DesignParameters | None = None,
 ):
+    """
+    Enumerates and aligns every candidate probe on a target.
+
+    `design` carries the thermodynamic settings (Tm window, length window,
+    split-arm Tm); anything it leaves unset takes the built-in default.
+    """
     if not ((transcript is not None) ^ (seq is not None)):
         raise ValueError("Either gene or sequence must be specified.")
 
@@ -134,6 +142,7 @@ def get_candidates(
             allow=allow,
             disallow=disallow,
             pseudogene_limit=pseudogene_limit,
+            design=design,
         )
     else:
         _run_transcript_generic(
@@ -144,6 +153,7 @@ def get_candidates(
             overwrite=overwrite,
             allow=allow,
             disallow=disallow,
+            design=design,
         )
 
 
@@ -192,6 +202,26 @@ def _convert_gene_to_tss(dataset: Dataset, gtss: list[str]):
     return out
 
 
+def _cached_design_matches(path: Path, resolved: ResolvedDesign) -> bool:
+    """
+    Whether an existing alignment was produced under `resolved`.
+
+    Candidates are reused between runs to save the alignment. A run under new
+    thermodynamic settings must not pick up candidates tiled under the old
+    ones, or the new settings would silently do nothing. Files written before
+    the settings were recorded carry no record, and are trusted.
+    """
+    record = read_provenance(path)
+    if record is None or "design" not in record:
+        return True
+    return record["design"] == resolved.model_dump(mode="json")
+
+
+def candidates_match_design(output: Path | str, gene: str, resolved: ResolvedDesign) -> bool:
+    """Whether a gene's existing candidates in `output` were tiled under `resolved`."""
+    return _cached_design_matches(Path(output) / f"{gene}_all.parquet", resolved)
+
+
 def _run_transcript(
     dataset: ReferenceDataset,
     transcript: str | None = None,
@@ -204,8 +234,10 @@ def _run_transcript(
     disallow: list[str] | None = None,
     formamide: int = 40,
     pseudogene_limit: int = -1,
+    design: DesignParameters | None = None,
 ):
     allow, disallow = allow or [], disallow or []
+    resolved = (design or DesignParameters()).resolve(reference=True)
 
     allow_tss = _convert_gene_to_tss(dataset, allow)
     disallow_tss = _convert_gene_to_tss(dataset, disallow)
@@ -255,7 +287,10 @@ def _run_transcript(
         if overwrite:
             raise FileNotFoundError
         offtargets = pl.read_parquet(output / f"{transcript_name}_bowtie.parquet")
-        y = pl.read_parquet(output / f"{transcript_name}_all.parquet")
+        y = pl.read_parquet(all_path := output / f"{transcript_name}_all.parquet")
+        if not _cached_design_matches(all_path, resolved):
+            logger.info(f"{transcript_name}: existing candidates were tiled under other settings; redoing.")
+            raise FileNotFoundError
         try:
             stats = json.loads(output.joinpath(f"{transcript_name}_crawled.stats.json").read_text())
         except FileNotFoundError:
@@ -273,6 +308,8 @@ def _run_transcript(
             seq,
             prefix=f"{gene if fasta is None else ''}_{transcript_id}",
             formamide=formamide,
+            length_limit=resolved.length_range,
+            tm_limit=resolved.tm_range,
         )
         # visualize_probe_coverage(
         #     crawled["pos_start"],
@@ -291,7 +328,7 @@ def _run_transcript(
         crawled = (
             crawled.with_columns(
                 splitted=pl.col("seq").map_elements(
-                    lambda pos: split_probe(pos, 60), return_dtype=pl.List(pl.Utf8)
+                    lambda pos: split_probe(pos, resolved.split_tm), return_dtype=pl.List(pl.Utf8)
                 ),
                 seq_full=pl.col("seq"),
             )
@@ -319,13 +356,18 @@ def _run_transcript(
         y = y.join(crawled[["name", "seq_full", "pad_start"]], on="name")
 
         alignment_prov = provenance_metadata(
-            dataset.path, stage="align", transcript=transcript_name, ignore_revcomp=ignore_revcomp
+            dataset.path,
+            stage="align",
+            transcript=transcript_name,
+            ignore_revcomp=ignore_revcomp,
+            design=resolved.model_dump(mode="json"),
         )
         y.write_parquet(output / f"{transcript_name}_all.parquet", metadata=alignment_prov)
         offtargets.write_parquet(output / f"{transcript_name}_bowtie.parquet", metadata=alignment_prov)
         stats = {
             "seq_length": len(seq),
             "crawled_length": len(crawled),
+            "design": resolved.model_dump(mode="json"),
         }
 
     # Print most common offtargets
@@ -438,6 +480,7 @@ def _run_transcript(
         transcript=transcript_name,
         species=dataset.species,
         ignore_revcomp=ignore_revcomp,
+        design=resolved.model_dump(mode="json"),
     )
     stats |= {
         "provenance": prov,
@@ -460,15 +503,20 @@ def _run_transcript_generic(
     allow: list[str] | None = None,
     disallow: list[str] | None = None,
     formamide: int = 40,
+    design: DesignParameters | None = None,
 ):
     allow, disallow = allow or [], disallow or []
+    resolved = (design or DesignParameters()).resolve(reference=False)
     (output := Path(output)).mkdir(exist_ok=True)
 
     try:
         if overwrite:
             raise FileNotFoundError
         offtargets = pl.read_parquet(output / f"{transcript}_bowtie.parquet")
-        y = pl.read_parquet(output / f"{transcript}_all.parquet")
+        y = pl.read_parquet(all_path := output / f"{transcript}_all.parquet")
+        if not _cached_design_matches(all_path, resolved):
+            logger.info(f"{transcript}: existing candidates were tiled under other settings; redoing.")
+            raise FileNotFoundError
         try:
             stats = json.loads(output.joinpath(f"{transcript}_crawled.stats.json").read_text())
         except FileNotFoundError:
@@ -486,7 +534,8 @@ def _run_transcript_generic(
             seq,
             prefix=f"{transcript}_{transcript}",
             formamide=formamide,
-            length_limit=(43, 54),
+            length_limit=resolved.length_range,
+            tm_limit=resolved.tm_range,
         )
         if len(crawled) > 5000:
             logger.warning(f"Transcript {transcript} has {len(crawled)} probes. Using only 2000.")
@@ -499,7 +548,7 @@ def _run_transcript_generic(
         crawled = (
             crawled.with_columns(
                 splitted=pl.col("seq").map_elements(
-                    lambda pos: split_probe(pos, 60), return_dtype=pl.List(pl.Utf8)
+                    lambda pos: split_probe(pos, resolved.split_tm), return_dtype=pl.List(pl.Utf8)
                 ),
                 seq_full=pl.col("seq"),
             )
@@ -536,13 +585,18 @@ def _run_transcript_generic(
         )
 
         alignment_prov = provenance_metadata(
-            dataset.path, stage="align", transcript=transcript, ignore_revcomp=ignore_revcomp
+            dataset.path,
+            stage="align",
+            transcript=transcript,
+            ignore_revcomp=ignore_revcomp,
+            design=resolved.model_dump(mode="json"),
         )
         y.write_parquet(output / f"{transcript}_all.parquet", metadata=alignment_prov)
         offtargets.write_parquet(output / f"{transcript}_bowtie.parquet", metadata=alignment_prov)
         stats = {
             "seq_length": len(seq),
             "crawled_length": len(crawled),
+            "design": resolved.model_dump(mode="json"),
         }
 
     # Print most common offtargets
@@ -624,6 +678,7 @@ def _run_transcript_generic(
         transcript=transcript,
         species=dataset.species,
         ignore_revcomp=ignore_revcomp,
+        design=resolved.model_dump(mode="json"),
     )
     stats |= {
         "provenance": prov,
@@ -658,6 +713,7 @@ def _run_transcript_generic(
     type=str,
     help="DO filter out probes that bind to these genes, separated by comma.",
 )
+@design_options
 def candidates(
     path: str,
     gene: str | None,
@@ -668,14 +724,27 @@ def candidates(
     allow: str | None = None,
     disallow: str | None = None,
     pseudogene_limit: int = -1,
+    tm_range: tuple[float, float] | None = None,
+    length_range: tuple[int, int] | None = None,
+    split_tm: float | None = None,
 ):
-    """Initial screening of probes candidates for a gene."""
+    """Initial screening of probes candidates for a gene.
+
+    The thermodynamic flags default to the values every panel has been designed
+    under. On an AT-rich transcriptome they are the levers that recover probes;
+    see the design_probes guide before changing them, since they alter how the
+    probes hybridise at the bench. `run-panel` reads the same settings from the
+    manifest.
+    """
     from .ext.ingest import DESIGN_TOOLS, check_external_tools
 
+    design = design_from_flags(tm_range, length_range, split_tm)
     # Fail on a missing aligner now, not minutes into the alignment.
     check_external_tools(DESIGN_TOOLS)
     allow_ = allow.split(",") if allow else None
     disallow_ = disallow.split(",") if disallow else None
+    if not design.is_default():
+        logger.info(f"Design settings: {design.describe()}.")
     get_candidates(
         load_dataset(path),
         transcript=gene,
@@ -686,4 +755,5 @@ def candidates(
         allow=allow_,
         disallow=disallow_,
         pseudogene_limit=pseudogene_limit,
+        design=design,
     )

@@ -1,6 +1,7 @@
 # %%
 import io
 import re
+import threading
 from functools import cache
 from typing import Literal, TypedDict
 
@@ -112,11 +113,25 @@ biopython_to_primer3 = {
     "dnac1": "dna_conc",
 }
 
+#: Serialises every call into primer3's thermodynamic code.
+#:
+#: libprimer3 keeps the working buffers of its hairpin/dimer calculation in
+#: global variables, and primer3-py releases the GIL while it runs. polars
+#: evaluates a `map_elements` UDF on its whole thread pool once a frame has
+#: several chunks, so a hairpin column over a candidate table had up to
+#: sixteen threads inside primer3 at once. They overwrote each other's
+#: buffers and the worker died with a bus error, which took the whole panel
+#: down. Holding this lock across the call is the fix; any thread that has to
+#: wait releases the GIL while it does, so nothing deadlocks.
+primer3_lock = threading.Lock()
+
 
 def hp(seq: str, model: Model, formamide: float = 0, **kwargs: Unpack[Conditions]) -> float:
     combined = CONDITIONS[model] | kwargs
     conditions = {v: combined[k] for k, v in biopython_to_primer3.items()}
-    return primer3.calc_hairpin_tm(seq, **conditions) + formamide_correction(seq, fmd=formamide)
+    with primer3_lock:
+        hairpin = primer3.calc_hairpin_tm(seq, **conditions)
+    return hairpin + formamide_correction(seq, fmd=formamide)
 
 
 r = re.compile(r"(\|{15,})")

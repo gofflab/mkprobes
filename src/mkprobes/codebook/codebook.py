@@ -8,8 +8,10 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 from loguru import logger
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 from scipy.stats import entropy
+
+from ..design import DesignParameters
 
 
 def hash_codebook_file(path: Path | str) -> str:
@@ -279,6 +281,10 @@ class ProbeSet(BaseModel):
     single: bool = False
     all_bit: int = 29
     n_probes: Literal["high", "low"] | int | None = None
+    #: The thermodynamic and tiling settings the panel is designed under.
+    #: `run-panel` reads them from here; assembly checks the outputs against
+    #: them. Left out, every setting is the built-in default.
+    design: DesignParameters = Field(default_factory=DesignParameters)
 
     def codebook_path(self, path: Path | str) -> Path:
         """Resolves this probe set's codebook, falling back to a bare filename."""

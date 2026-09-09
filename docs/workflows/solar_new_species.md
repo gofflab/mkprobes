@@ -152,11 +152,22 @@ Three things behave differently on a custom dataset:
 Octopus reference numbers, for 17.9 / 16.6 / 16.0 kb targets: 1,700–2,800
 candidates each → 57–73 screened pairs → 54–69 constructed probes.
 
+Those are thin for transcripts that long, and the reason is GC content: the
+octopus transcriptome is 36.7% GC, and the crawler's Tm floor and length cap
+were set for mammalian sequence near 50%. Most start positions never reach
+the Tm floor within the length cap, so candidates come only from local
+GC-rich islands. The manifest's `design` block is where to change that; on
+the 17.9 kb target, `split_tm` 55 with `length_range` 43–60 and `tm_range`
+50–68 gave 126 screened pairs instead of 58. Read
+[Design settings](design_probes.md#design-settings) first: every one of
+those changes alters hybridisation at the bench.
+
 ## 5. Panel QC
 
 Unchanged; see {doc}`qc_your_panel`. For low-yield targets the non-model
-options are the usual ones: try a different isoform, loosen
-`--minimum`/`--maxoverlap`, or accept verified homologous off-targets.
+options are: try a different isoform, raise `max_overlap` or relax the
+thermodynamics in the manifest's `design` block, or accept verified
+homologous off-targets.
 
 ## 6. Assembly
 

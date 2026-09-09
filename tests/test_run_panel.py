@@ -43,7 +43,7 @@ class ImmediateExecutor:
         fut: Future = Future()
         try:
             fut.set_result(fn(*args, **kwargs))
-        except Exception as e:  # noqa: BLE001
+        except BaseException as e:  # noqa: BLE001 - the real worker wraps BaseException too
             fut.set_exception(e)
         return fut
 
@@ -132,6 +132,38 @@ class TestRunPanel:
         assert summary["done"] == ["Och.958.1"]
         failed_file = codebook_path.parent / "codebook.failed.txt"
         assert failed_file.read_text().strip() == "Och.687.1"
+
+    def test_a_process_exit_in_one_gene_is_recorded_not_fatal(self, tmp_path: Path, codebook_path: Path):
+        # A stage that called `exit(0)` surfaced as SystemExit, which is not an
+        # Exception. It escaped the driver and ended a 500-target panel silently
+        # after three genes, with no `.failed.txt` to say so.
+        def worker(*a, **k):
+            if k["gene"] == "Och.687.1":
+                raise SystemExit(0)
+
+        summary, _, _ = self._run(tmp_path, codebook_path, worker)
+
+        assert summary["failed"] == ["Och.687.1"]
+        assert summary["done"] == ["Och.958.1"]
+        assert (codebook_path.parent / "codebook.failed.txt").read_text().strip() == "Och.687.1"
+
+    def test_a_dead_worker_pool_is_reported_as_unattempted(self, tmp_path: Path, codebook_path: Path):
+        # A worker that dies in C code breaks the pool, and every queued gene
+        # then fails instantly with BrokenProcessPool. Those genes were never
+        # run: they must not be listed as failures, and a re-run must pick
+        # them up.
+        from concurrent.futures.process import BrokenProcessPool
+
+        def worker(*a, **k):
+            if k["gene"] == "Och.958.1":
+                raise BrokenProcessPool("A process in the process pool was terminated abruptly")
+
+        summary, _, _ = self._run(tmp_path, codebook_path, worker)
+
+        assert summary["unattempted"] == ["Och.958.1"]
+        assert summary["failed"] == []
+        assert summary["done"] == ["Och.687.1"]
+        assert not (codebook_path.parent / "codebook.failed.txt").exists()
 
     def test_single_gene_mode_forces_overwrite(self, tmp_path: Path, codebook_path: Path):
         out = tmp_path / "output"

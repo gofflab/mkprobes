@@ -67,8 +67,16 @@ def handle_overlap(
     stats["match_any"] = len(df)
 
     if not len(df):
-        logger.critical("No probes passed filters")
-        exit(0)
+        # Raised, not `exit(0)`: this runs inside a `run-panel` worker, where a
+        # process exit surfaced as `SystemExit` in the driver, escaped its
+        # error handling, and ended the whole panel silently with the other
+        # targets never started. An error is recorded against this one target
+        # and the panel carries on.
+        raise ValueError(
+            f"No probes passed the filters for {gene}: none of {len(ddf)} candidate arm(s) "
+            "cleared the composition, hairpin and off-target floors. Usually the transcript "
+            "is short or AT-rich; try a longer isoform, or check its off-target table."
+        )
     logger.info(f"Max pos_end: {df['pos_end'].max()}")
     for i in range(1, len(criteria) + 1):
         run = (

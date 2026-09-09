@@ -23,6 +23,7 @@ from pydantic import TypeAdapter, ValidationError
 from .assembly import hfs
 from .codebook.codebook import ProbeSet
 from .constants import GOOD_SPECIES, SOLAR_RESTRICTION
+from .design import DesignParameters
 
 GENES_TEMPLATE = """\
 # One target per line: a gene name, or a transcript ID for a custom dataset.
@@ -88,7 +89,7 @@ prints the same record from any output.
 | File | What it is |
 | --- | --- |
 | `genes.txt` | Your targets, one per line. Edit this first. |
-| `manifest.json` | Describes this panel for the assembly step. |
+| `manifest.json` | Describes this panel: design settings for step 3, assembly fields for step 6. |
 | `codebook.json` | Written by step 2. Do not edit by hand. |
 | `output/` | Per-target design output, written by step 3. |
 | `generated/` | The orderable pool, written by step 6. |
@@ -107,6 +108,29 @@ MANIFEST_COMMENT = {
         'Maximum probes per target in the pool. A number, or "high" (34) or '
         '"low" (16). Omit to let the species decide.'
     ),
+    "design": (
+        "How probes are designed. `mkprobes run-panel` reads these from here, and "
+        "assembly warns if the outputs were designed under anything else. The values "
+        "written are the defaults; delete a field to keep its default. They change how "
+        "probes hybridise, so read the design_probes guide before editing."
+    ),
+    "design.tm_range": (
+        "Tm window in °C (at the design formamide) a probe must fall in. Lower the first "
+        "number on AT-rich transcripts to admit probes that bind less tightly."
+    ),
+    "design.length_range": (
+        "Probe length window in nt. Raise the second number (60 at most) so AT-rich "
+        "windows can grow long enough to reach the Tm floor."
+    ),
+    "design.split_tm": (
+        "Tm in °C each arm of the split probe must reach. The largest lever on AT-rich "
+        "transcripts, and the one to lower with the most care: both arms must bind."
+    ),
+    "design.min_probes": "Probes per target the screen aims for.",
+    "design.max_overlap": (
+        "How far neighbouring probes may overlap (nt, multiples of 5) to reach min_probes. "
+        "0 keeps probes disjoint."
+    ),
 }
 
 
@@ -116,7 +140,15 @@ def max_bcidx() -> int:
 
 
 def manifest_stub(name: str, species: str, bcidx: int = 0, n_probes: int = 24) -> list[dict[str, Any]]:
-    """A manifest that is valid on the first try."""
+    """
+    A manifest that is valid on the first try.
+
+    The design block is written out in full, with the defaults for the species,
+    so the numbers a user might need to change are in front of them rather
+    than buried in code. Writing them explicitly designs exactly what leaving
+    them out would.
+    """
+    design = DesignParameters().resolve(reference=species in GOOD_SPECIES)
     return [
         {
             "_comment": {key: value.format(max_bcidx=max_bcidx()) for key, value in MANIFEST_COMMENT.items()},
@@ -125,6 +157,7 @@ def manifest_stub(name: str, species: str, bcidx: int = 0, n_probes: int = 24) -
             "codebook": "codebook.json",
             "bcidx": bcidx,
             "n_probes": n_probes,
+            "design": design.model_dump(mode="json"),
         }
     ]
 
@@ -232,6 +265,7 @@ def check_manifest_cli(manifest: Path):
     for probeset in probesets:
         click.echo(
             f"{probeset.name}: {probeset.species}, codebook {probeset.codebook}, "
-            f"bcidx {probeset.bcidx}, enzymes {'+'.join(SOLAR_RESTRICTION)}"
+            f"bcidx {probeset.bcidx}, enzymes {'+'.join(SOLAR_RESTRICTION)}, "
+            f"design {probeset.design.describe()}"
         )
     click.echo(f"{manifest} is valid.")

@@ -19,6 +19,7 @@ import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -27,10 +28,20 @@ import rich_click as click
 from loguru import logger
 from rich.progress import Progress
 
+from .design import (
+    DEFAULT_MAX_OVERLAP,
+    DEFAULT_MIN_PROBES,
+    DesignParameters,
+    design_from_flags,
+    design_options,
+    matches_recorded,
+)
+from .utils.provenance import read_provenance
+
 # Production defaults, inherited from the original batch drivers.
 DEFAULT_RESTRICTION = ("BamHI", "KpnI")
-DEFAULT_MINIMUM = 60
-DEFAULT_MAXOVERLAP = 0
+DEFAULT_MINIMUM = DEFAULT_MIN_PROBES
+DEFAULT_MAXOVERLAP = DEFAULT_MAX_OVERLAP
 DEFAULT_TARGET_PROBES = 48
 DEFAULT_WORKERS = 16
 
@@ -78,6 +89,59 @@ def find_missing_final(codebook: dict[str, list[int]], output: Path, restriction
     return [g for g, bits in sorted(codebook.items()) if not final_parquet(output, g, bits, restriction).exists()]
 
 
+def designed_under(final: Path) -> dict | None:
+    """The design settings a construct output records, or `None` if it records none."""
+    return (read_provenance(final) or {}).get("design")
+
+
+def design_for_codebook(codebook: Path, manifest: Path | None) -> tuple[DesignParameters, Path | None]:
+    """
+    The design block of the probe set that names this codebook.
+
+    The manifest is where a panel's design settings live, so `run-panel` reads
+    them from there: the `--manifest` given, or else a `manifest.json` beside
+    the codebook, which is where `mkprobes init` puts it. An explicit manifest
+    that does not list the codebook is an error; an implicit one is ignored
+    with a warning, since it may describe a different panel altogether.
+
+    Returns the settings and the manifest they came from (`None` if none).
+    """
+    from pydantic import ValidationError
+
+    from .codebook.codebook import ProbeSet
+
+    explicit = manifest is not None
+    manifest = manifest or codebook.parent / "manifest.json"
+    if not manifest.exists():
+        return DesignParameters(), None
+
+    try:
+        probesets = ProbeSet.from_manifest(manifest)
+    except ValidationError as e:
+        raise ValueError(f"{manifest} is not a valid manifest:\n{e}") from e
+
+    matches = [ps for ps in probesets if (manifest.parent / ps.codebook).resolve() == codebook.resolve()]
+    if not matches:
+        if explicit:
+            raise ValueError(
+                f"{manifest} has no probe set whose codebook is {codebook}. Add one, or point "
+                "--manifest at the manifest that describes this panel."
+            )
+        logger.warning(
+            f"{manifest} sits beside {codebook.name} but none of its probe sets name it, so its "
+            "design settings are not used. Pass --manifest to use a manifest from elsewhere."
+        )
+        return DesignParameters(), None
+
+    designs = {json.dumps(ps.design.explicit(), sort_keys=True) for ps in matches}
+    if len(designs) > 1:
+        raise ValueError(
+            f"{manifest} lists {codebook.name} under {len(matches)} probe sets with different "
+            "design settings, so it is ambiguous which to design under. Make them agree."
+        )
+    return matches[0].design, manifest
+
+
 def run_gene(
     dataset_path: Path,
     output: Path,
@@ -86,11 +150,10 @@ def run_gene(
     acceptable: list[str] | None,
     overwrite: bool = False,
     log_level: str = "DEBUG",
-    minimum: int = DEFAULT_MINIMUM,
-    maxoverlap: int = DEFAULT_MAXOVERLAP,
     restriction: tuple[str, ...] = DEFAULT_RESTRICTION,
     target_probes: int = DEFAULT_TARGET_PROBES,
     codebook_hash: str | None = None,
+    design: DesignParameters | None = None,
     **kwargs,
 ):
     """
@@ -99,13 +162,16 @@ def run_gene(
     Runs in a worker process: logs to `output/<gene>.log`, skips finished
     genes, and reuses an existing `<gene>_crawled.parquet` unless
     overwriting. An allow-list forces a re-screen/re-construct so accepted
-    off-targets take effect. Exceptions are re-raised tagged with the gene.
+    off-targets take effect, and so do candidates that were tiled under other
+    design settings. Exceptions are re-raised tagged with the gene.
     """
     # Deferred imports keep worker startup (forkserver) lean.
-    from .candidates import get_candidates
+    from .candidates import candidates_match_design, get_candidates
     from .codebook.finalconstruct import construct
-    from .ext.dataset import load_dataset
+    from .ext.dataset import ReferenceDataset, load_dataset
     from .screen import run_screen
+
+    design = design or DesignParameters()
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -115,8 +181,14 @@ def run_gene(
         return
 
     ds = load_dataset(dataset_path)
+    resolved = design.resolve(reference=isinstance(ds, ReferenceDataset))
     try:
-        if overwrite or not (output / f"{gene}_crawled.parquet").exists():
+        crawled = output / f"{gene}_crawled.parquet"
+        if crawled.exists() and not overwrite and not candidates_match_design(output, gene, resolved):
+            # Reusing them would make a changed setting do nothing, silently.
+            logger.info(f"{gene}: existing candidates were tiled under other design settings; redoing.")
+            overwrite = True
+        if overwrite or not crawled.exists():
             get_candidates(
                 ds,
                 transcript=gene,
@@ -124,6 +196,7 @@ def run_gene(
                 ignore_revcomp=False,
                 allow=acceptable,
                 overwrite=overwrite,
+                design=design,
                 **kwargs,
             )
             time.sleep(1)  # let parquet writes settle before the next stage reads them
@@ -131,11 +204,13 @@ def run_gene(
         run_screen(
             output,
             gene,
-            minimum=minimum,
+            minimum=resolved.min_probes,
             restriction=list(restriction),
-            maxoverlap=maxoverlap,
+            maxoverlap=resolved.max_overlap,
             overwrite=overwrite,
         )
+        # No overlap given: construct takes the screened file at the overlap
+        # the search settled on, so `max_overlap` reaches the pool.
         construct(
             ds,
             output,
@@ -145,11 +220,16 @@ def run_gene(
             target_probes=target_probes,
             codebook_hash=codebook_hash,
             overwrite=overwrite,
+            design=resolved,
         )
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         # Keep the cause in the message: the panel driver reports this line to a
         # user who cannot see the worker's traceback, and "No probes left after
         # filtering" is the actionable part, not the gene name.
+        #
+        # `SystemExit` is included because a process exit inside a stage is not
+        # an `Exception`: it used to pass through the driver's error handling
+        # and end the whole panel, silently, with nothing recorded.
         raise RuntimeError(f"{gene}: {type(e).__name__}: {e}") from e
 
 
@@ -162,19 +242,21 @@ def run_panel(
     allow_file: Path | None = None,
     workers: int = DEFAULT_WORKERS,
     overwrite: bool = False,
-    minimum: int = DEFAULT_MINIMUM,
-    maxoverlap: int = DEFAULT_MAXOVERLAP,
     restriction: tuple[str, ...] = DEFAULT_RESTRICTION,
     target_probes: int = DEFAULT_TARGET_PROBES,
+    design: DesignParameters | None = None,
 ) -> dict[str, list[str]]:
     """
     Designs probes for every gene in the codebook, in parallel.
 
-    Returns {"done": [...], "skipped": [...], "failed": [...]}. Failed genes
-    are also appended to `<codebook>.failed.txt` (recreated per run).
+    `design` holds the thermodynamic and tiling settings; unset fields are
+    the defaults. Returns {"done": [...], "skipped": [...], "failed": [...]}.
+    Failed genes are also appended to `<codebook>.failed.txt` (recreated per
+    run).
     """
     from .codebook.codebook import hash_codebook_file
 
+    design = design or DesignParameters()
     codebook = load_worklist(codebook_path)
     # From the file, not the worklist: load_worklist drops Blank codes, and
     # hashing the filtered dict yields a different value from the one
@@ -205,6 +287,22 @@ def run_panel(
     skipped = [g for g in genes if g not in todo]
     if skipped:
         logger.info(f"Skipping {len(skipped)} finished gene(s); pass --overwrite to redo.")
+        # Finished genes are skipped by design, but a finished gene designed
+        # under other settings than the ones asked for now is worth naming:
+        # otherwise editing the manifest's design block would appear to do
+        # nothing for most of the panel.
+        stale = [
+            g
+            for g in skipped
+            if not matches_recorded(design, designed_under(final_parquet(output, g, codebook[g], restriction)))
+        ]
+        if stale:
+            logger.warning(
+                f"{len(stale)} finished gene(s) were designed under other design settings than "
+                f"requested now ({design.describe()}): {', '.join(stale[:10])}"
+                f"{' ...' if len(stale) > 10 else ''}. They are kept as they are; pass --overwrite "
+                "to redesign them."
+            )
     if not todo:
         return {"done": [], "skipped": skipped, "failed": []}
 
@@ -212,6 +310,11 @@ def run_panel(
     failed_path.unlink(missing_ok=True)
 
     failed: list[str] = []
+    # Genes the pool never ran because a worker process died outright (a
+    # crash in C code, a memory kill). They did not fail; they were not
+    # attempted, and a re-run picks them up. Kept apart from `failed` so the
+    # failure file names real failures only.
+    unattempted: list[str] = []
     with (
         # "spawn" rather than the original scripts' "forkserver": forkserver
         # deadlocks on macOS (and is Linux-only in practice); spawn is portable
@@ -229,10 +332,10 @@ def run_panel(
                 gene=g,
                 acceptable=acceptable.get(g),
                 overwrite=force,
-                minimum=minimum,
-                maxoverlap=maxoverlap,
                 restriction=restriction,
                 target_probes=target_probes,
+                design=design,
+                codebook_hash=codebook_hash,
             ): g
             for g, force in todo.items()
         }
@@ -241,18 +344,31 @@ def run_panel(
             progress.advance(task)
             try:
                 fut.result()
-            except Exception as e:
+            except BrokenProcessPool:
+                unattempted.append(g)
+            except (Exception, SystemExit) as e:
+                # One target must never take the panel down with it.
                 failed.append(g)
                 logger.critical(f"{g} failed: {e}")
                 traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
                 with failed_path.open("a") as fh:
                     fh.write(g + "\n")
 
-    done = [g for g in todo if g not in failed]
-    logger.info(f"Panel run complete: {len(done)} done, {len(skipped)} skipped, {len(failed)} failed.")
+    done = [g for g in todo if g not in failed and g not in unattempted]
+    logger.info(
+        f"Panel run complete: {len(done)} done, {len(skipped)} skipped, {len(failed)} failed"
+        + (f", {len(unattempted)} not attempted." if unattempted else ".")
+    )
     if failed:
         logger.critical(f"Failed genes written to {failed_path}: {failed}")
-    return {"done": done, "skipped": skipped, "failed": failed}
+    if unattempted:
+        logger.critical(
+            f"A worker process died, so {len(unattempted)} gene(s) were never attempted "
+            f"(not written to {failed_path.name}; they have no log and no error of their own). "
+            "Look for a crash report in ~/Library/Logs/DiagnosticReports (macOS) or `dmesg` "
+            "(Linux), then re-run this command: finished genes are skipped and these are picked up."
+        )
+    return {"done": done, "skipped": skipped, "failed": failed, "unattempted": unattempted}
 
 
 @click.command("run-panel")
@@ -266,10 +382,15 @@ def run_panel(
 @click.option("--allow-file", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
               help="Per-gene acceptable off-targets JSON "
               "(default: <codebook>.acceptable.json when present).")
-@click.option("--minimum", type=int, default=DEFAULT_MINIMUM, show_default=True,
-              help="Minimum probes per gene at the screen stage.")
-@click.option("--maxoverlap", type=int, default=DEFAULT_MAXOVERLAP, show_default=True,
-              help="Maximum probe overlap tried to reach --minimum.")
+@click.option("--manifest", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="Manifest holding the panel's design settings (default: manifest.json beside "
+              "the codebook, when it lists it).")
+@click.option("--minimum", type=int, default=None,
+              help=f"Probes per gene the screen aims for [default: {DEFAULT_MIN_PROBES}].")
+@click.option("--maxoverlap", type=int, default=None,
+              help="Maximum probe overlap (nt, multiples of 5) tried to reach --minimum "
+              f"[default: {DEFAULT_MAX_OVERLAP}]. The overlap that reaches it is the one constructed.")
+@design_options
 @click.option("--restriction", type=str, default=",".join(DEFAULT_RESTRICTION), show_default=True,
               help="Restriction enzymes, comma-separated.")
 @click.option("--target-probes", type=int, default=DEFAULT_TARGET_PROBES, show_default=True,
@@ -285,8 +406,12 @@ def run_panel_cli(
     output: Path | None,
     workers: int,
     allow_file: Path | None,
-    minimum: int,
-    maxoverlap: int,
+    manifest: Path | None,
+    minimum: int | None,
+    maxoverlap: int | None,
+    tm_range: tuple[float, float] | None,
+    length_range: tuple[int, int] | None,
+    split_tm: float | None,
     restriction: str,
     target_probes: int,
     overwrite: bool,
@@ -296,11 +421,26 @@ def run_panel_cli(
     """Design probes for every target in CODEBOOK (candidates -> screen -> construct, in parallel).
 
     Give an optional GENE to re-run just that target (forces overwrite for it).
+
+    Design settings (Tm window, length window, split-arm Tm, probes per gene,
+    overlap) come from the manifest's `design` block, and a flag given here
+    overrides the manifest for this run. Anything set nowhere is the default
+    every panel has been designed under.
     """
     from .constants import validate_restriction
     from .ext.ingest import DESIGN_TOOLS, check_external_tools
 
     output = output or codebook.parent / "output"
+    try:
+        from_manifest, manifest_used = design_for_codebook(codebook, manifest)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    from_flags = design_from_flags(tm_range, length_range, split_tm, minimum, maxoverlap)
+    design = from_manifest.merged(from_flags)
+    if manifest_used is not None:
+        logger.info(f"Design settings from {manifest_used}: {from_manifest.describe()}.")
+    if not from_flags.is_default():
+        logger.info(f"Design settings from the command line: {from_flags.describe()}.")
     enzymes = tuple(e.strip() for e in restriction.split(",") if e.strip())
     try:
         validate_restriction(enzymes)
@@ -331,10 +471,9 @@ def run_panel_cli(
         allow_file=allow_file,
         workers=workers,
         overwrite=overwrite,
-        minimum=minimum,
-        maxoverlap=maxoverlap,
         restriction=enzymes,
         target_probes=target_probes,
+        design=design,
     )
-    if summary["failed"]:
+    if summary["failed"] or summary.get("unattempted"):
         raise SystemExit(1)

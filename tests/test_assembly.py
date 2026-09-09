@@ -14,6 +14,7 @@ tools.
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import polars as pl
@@ -101,3 +102,60 @@ class TestAssemblyInvariants:
     def test_sequences_are_unambiguous(self, assembled: pl.DataFrame):
         for column in ("splintcons", "padlockcons"):
             assert not assembled[column].str.to_uppercase().str.contains("N").any()
+
+
+class TestRepeatMasker:
+    """
+    The RepeatMasker branch had never run under test. A missing binary was
+    swallowed by the executor, and the run then died on a polars call that
+    passed a dictionary positionally, with an error that named neither.
+    """
+
+    def test_missing_binary_is_named(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from mkprobes import assembly
+
+        monkeypatch.setattr(assembly.shutil, "which", lambda name: None)
+        work = tmp_path / "panel"
+        shutil.copytree(FIXTURE, work)
+        probeset = ProbeSet(**json.loads((FIXTURE / "manifest.json").read_text())[0])
+
+        with pytest.raises(FileNotFoundError, match="RepeatMasker is not on PATH.*--skip-repeatmasker"):
+            run(work, probeset, n=6, rm_species="mollusca")
+
+    def test_masked_sequences_are_read_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assembled: pl.DataFrame
+    ):
+        from mkprobes import assembly
+
+        def fake_repeatmasker(cmd, **kwargs):
+            # RepeatMasker writes <input>.masked beside its input; nothing masked here.
+            fasta = Path(cmd[-1])
+            shutil.copy(fasta, fasta.with_suffix(fasta.suffix + ".masked"))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(assembly.shutil, "which", lambda name: "/usr/bin/RepeatMasker")
+        monkeypatch.setattr(assembly.subprocess, "run", fake_repeatmasker)
+        work = tmp_path / "panel"
+        shutil.copytree(FIXTURE, work)
+        probeset = ProbeSet(**json.loads((FIXTURE / "manifest.json").read_text())[0])
+
+        run(work, probeset, n=6, rm_species="mollusca")
+
+        out = pl.read_parquet(work / "generated" / f"{probeset.name}.parquet")
+        assert out["padlockcons"].to_list() == assembled["padlockcons"].to_list()
+        assert out["splintcons"].to_list() == assembled["splintcons"].to_list()
+
+    def test_a_failed_run_reports_repeatmasker_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from mkprobes import assembly
+
+        def failing(cmd, **kwargs):
+            raise subprocess.CalledProcessError(1, cmd, stderr="Species 'squidx' is not known to the library")
+
+        monkeypatch.setattr(assembly.shutil, "which", lambda name: "/usr/bin/RepeatMasker")
+        monkeypatch.setattr(assembly.subprocess, "run", failing)
+        work = tmp_path / "panel"
+        shutil.copytree(FIXTURE, work)
+        probeset = ProbeSet(**json.loads((FIXTURE / "manifest.json").read_text())[0])
+
+        with pytest.raises(RuntimeError, match=r"(?s)RepeatMasker failed.*not known"):
+            run(work, probeset, n=6, rm_species="squidx")

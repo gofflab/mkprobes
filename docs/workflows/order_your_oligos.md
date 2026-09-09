@@ -19,7 +19,14 @@ a correct one:
     "species": "mouse",
     "codebook": "codebook.json",
     "bcidx": 0,
-    "n_probes": 24
+    "n_probes": 24,
+    "design": {
+      "tm_range": [54, 68],
+      "length_range": [43, 55],
+      "split_tm": 60,
+      "min_probes": 60,
+      "max_overlap": 0
+    }
   }
 ]
 ```
@@ -31,6 +38,12 @@ a correct one:
 | `codebook` | path to the codebook, **relative to the manifest** |
 | `bcidx` | which header/footer pair to build against |
 | `n_probes` | maximum probes per target: a number, or `"high"` (34) or `"low"` (16). Omit to let the species decide |
+| `design` | the settings `run-panel` designs this panel under. Omit a field, or the block, for the defaults. See [Design settings](design_probes.md#design-settings) |
+
+The manifest is a list, so one file can describe several panels, each with
+its own codebook and its own `design` block. `gen` checks every target's
+output against its panel's block and warns about any designed under other
+settings, so the pool you order is the one the manifest describes.
 
 `bcidx` is the field people get wrong. Each index consumes two rows of an
 internal header/footer table, so the valid range is bounded — use a different
