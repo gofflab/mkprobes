@@ -16,6 +16,7 @@ from click.testing import CliRunner
 from conftest import flatten_cli_output
 
 from mkprobes import cli
+from mkprobes.codebook.generate import ORDER, make_codebook
 from mkprobes.init_project import check_manifest, manifest_stub, max_bcidx
 from mkprobes.utils.targets import read_target_list
 
@@ -73,6 +74,23 @@ class TestInit:
         assert result.exit_code != 0
         assert "--bcidx" in flatten_cli_output(result.output)
 
+    def test_stub_carries_the_offset(self, project: Path):
+        entries = json.loads((project / "manifest.json").read_text())
+        assert entries[0]["offset"] == 0
+        assert "offset" in entries[0]["_comment"]
+
+    def test_offset_is_written_from_the_flag(self, runner: CliRunner, tmp_path: Path):
+        result = runner.invoke(cli.main, ["init", str(tmp_path / "panel_b"), "--offset", "10"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads((tmp_path / "panel_b" / "manifest.json").read_text())[0]["offset"] == 10
+
+    def test_out_of_range_offset_is_refused(self, runner: CliRunner, tmp_path: Path):
+        result = runner.invoke(cli.main, ["init", str(tmp_path / "p"), "--offset", str(len(ORDER))])
+
+        assert result.exit_code != 0
+        assert "--offset" in flatten_cli_output(result.output)
+
 
 class TestCheckManifest:
     def _write(self, tmp_path: Path, entries: object) -> Path:
@@ -89,6 +107,78 @@ class TestCheckManifest:
 
         with pytest.raises(ValueError, match="bcidx"):
             check_manifest(path)
+
+    def test_rejects_out_of_range_offset(self, tmp_path: Path):
+        entries = manifest_stub("p", "mouse")
+        entries[0]["offset"] = len(ORDER)
+        path = self._write(tmp_path, entries)
+
+        with pytest.raises(ValueError, match="offset"):
+            check_manifest(path)
+
+    def test_rejects_an_unknown_field(self, tmp_path: Path):
+        # A misspelt offset used to be ignored, which for pooled panels means
+        # two codebooks silently sharing bits.
+        entries = manifest_stub("p", "mouse")
+        entries[0]["offest"] = 10
+        path = self._write(tmp_path, entries)
+
+        with pytest.raises(ValueError, match="offest"):
+            check_manifest(path)
+
+    def test_rejects_a_codebook_that_does_not_start_at_the_offset(self, tmp_path: Path):
+        # The manifest was edited after the codebook was generated (or the
+        # codebook was generated with --offset overriding it).
+        entries = manifest_stub("p", "mouse")
+        entries[0]["offset"] = 10
+        path = self._write(tmp_path, entries)  # codebook starts at bit 1, position 0
+
+        with pytest.raises(ValueError, match="starts at bit position 0"):
+            check_manifest(path)
+
+    def test_accepts_a_codebook_generated_at_the_offset(self, tmp_path: Path):
+        entries = manifest_stub("p", "mouse")
+        entries[0]["offset"] = 10
+        path = self._write(tmp_path, entries)
+        (tmp_path / "codebook.json").write_text(json.dumps(make_codebook(["A", "B"], n_bits=10, offset=10)))
+
+        assert check_manifest(path)[0].offset == 10
+
+    def test_rejects_bits_outside_the_readout_table(self, tmp_path: Path):
+        path = self._write(tmp_path, manifest_stub("p", "mouse"))
+        (tmp_path / "codebook.json").write_text(json.dumps({"A": [1, 2, len(ORDER) + 1]}))
+
+        with pytest.raises(ValueError, match="only 1 to"):
+            check_manifest(path)
+
+    def test_rejects_pooled_panels_sharing_bits(self, tmp_path: Path):
+        # One manifest, two panels, both generated at offset 0: the very
+        # mistake `offset` exists to prevent.
+        a, b = manifest_stub("a", "mouse")[0], manifest_stub("b", "mouse", bcidx=1)[0]
+        b["codebook"] = "codebook_b.json"
+        path = self._write(tmp_path, [a, b])
+        (tmp_path / "codebook.json").write_text(json.dumps(make_codebook(["A"], n_bits=10)))
+        (tmp_path / "codebook_b.json").write_text(json.dumps(make_codebook(["B"], n_bits=10)))
+
+        with pytest.raises(ValueError, match="share readout bit"):
+            check_manifest(path)
+
+    def test_accepts_pooled_panels_with_disjoint_bits(self, tmp_path: Path):
+        a, b = manifest_stub("a", "mouse")[0], manifest_stub("b", "mouse", bcidx=1, offset=10)[0]
+        b["codebook"] = "codebook_b.json"
+        path = self._write(tmp_path, [a, b])
+        (tmp_path / "codebook.json").write_text(json.dumps(make_codebook(["A"], n_bits=10)))
+        (tmp_path / "codebook_b.json").write_text(json.dumps(make_codebook(["B"], n_bits=10, offset=10)))
+
+        assert [p.offset for p in check_manifest(path)] == [0, 10]
+
+    def test_one_codebook_under_two_probe_sets_is_not_a_clash(self, tmp_path: Path):
+        # run-panel allows the same codebook under several probe sets; that is
+        # one panel described twice, not two panels colliding.
+        a, b = manifest_stub("a", "mouse")[0], manifest_stub("b", "mouse", bcidx=1)[0]
+        path = self._write(tmp_path, [a, b])
+
+        assert len(check_manifest(path)) == 2
 
     def test_rejects_a_missing_codebook(self, tmp_path: Path):
         path = tmp_path / "manifest.json"
@@ -124,6 +214,7 @@ class TestCheckManifest:
 
         assert result.exit_code == 0, result.output
         assert "is valid" in flatten_cli_output(result.output)
+        assert "offset 0" in flatten_cli_output(result.output)
 
 
 class TestReadTargetList:

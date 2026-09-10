@@ -19,6 +19,7 @@ a correct one:
     "species": "mouse",
     "codebook": "codebook.json",
     "bcidx": 0,
+    "offset": 0,
     "n_probes": 24,
     "design": {
       "tm_range": [54, 68],
@@ -37,6 +38,7 @@ a correct one:
 | `species` | picks the RepeatMasker taxon; any name is accepted |
 | `codebook` | path to the codebook, **relative to the manifest** |
 | `bcidx` | which header/footer pair to build against |
+| `offset` | the bit position this panel's codebook starts at; `make-codebook` reads it from here. 0 for a first panel. See [Pooling panels](design_the_codebook.md#pooling-panels-the-offset) |
 | `n_probes` | maximum probes per target: a number, or `"high"` (34) or `"low"` (16). Omit to let the species decide |
 | `design` | the settings `run-panel` designs this panel under. Omit a field, or the block, for the defaults. See [Design settings](design_probes.md#design-settings) |
 
@@ -50,15 +52,21 @@ internal header/footer table, so the valid range is bounded — use a different
 index for each panel you intend to pool together, and `check-manifest` will
 tell you the maximum if you exceed it.
 
+Panels pooled together need a distinct `offset` too: `bcidx` keeps their
+amplification apart, `offset` keeps their readout bits apart. Listing the
+panels in one manifest is how you declare that intent, and `check-manifest`
+then refuses any two whose codebooks share a bit.
+
 ## Check it first
 
 ```bash
 mkprobes check-manifest panel_a/manifest.json
 ```
 
-This validates the whole manifest — schema, `bcidx` range, that each named
-codebook actually exists, that panel names are unique — and prints a summary
-line per probe set. It takes a second. Run it before `gen`, which otherwise
+This validates the whole manifest — schema (unknown fields are rejected),
+`bcidx` and `offset` ranges, that each named codebook actually exists and
+starts at its probe set's offset, that panels in the manifest occupy disjoint
+bits, that panel names are unique — and prints a summary line per probe set. It takes a second. Run it before `gen`, which otherwise
 spends hours proving the same point.
 
 (`assemble` runs the same validation itself, so a bad manifest fails fast

@@ -13,6 +13,7 @@ assembly spends hours proving it wrong.
 """
 
 import json
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .assembly import hfs
 from .codebook.codebook import ProbeSet
+from .codebook.generate import ORDER
 from .constants import GOOD_SPECIES, SOLAR_RESTRICTION
 from .design import DesignParameters
 
@@ -64,7 +66,7 @@ checks the previous step's output before it starts.
 mkprobes chkgenes {dataset} genes.txt
 mkprobes convert-to-transcripts {dataset} genes.converted.txt{transcript_mode}
 
-# 2. Assign readout bits to each target
+# 2. Assign readout bits to each target, starting at the manifest's offset
 mkprobes make-codebook {dataset} genes.converted.tss.txt -o codebook.json
 
 # 3. Design probes for every target (this is the long one)
@@ -104,6 +106,14 @@ MANIFEST_COMMENT = {
         "internal table, so valid values are 0 to {max_bcidx}. Use a different index "
         "for each panel you will pool together."
     ),
+    "offset": (
+        "Where this panel's codebook starts in the readout order, as a 0-based bit "
+        "position (not a readout ID). `mkprobes make-codebook` reads it from here. "
+        "Panels hybridised together must not share bits: leave the first panel at 0 "
+        "and give each further panel the number of bits already taken (a 10-bit "
+        "panel takes 10, so the next starts at 10). {n_readouts} readout IDs exist "
+        "in all. Pair it with a distinct bcidx."
+    ),
     "n_probes": (
         'Maximum probes per target in the pool. A number, or "high" (34) or '
         '"low" (16). Omit to let the species decide.'
@@ -139,7 +149,9 @@ def max_bcidx() -> int:
     return len(hfs) // 2 - 1
 
 
-def manifest_stub(name: str, species: str, bcidx: int = 0, n_probes: int = 24) -> list[dict[str, Any]]:
+def manifest_stub(
+    name: str, species: str, bcidx: int = 0, n_probes: int = 24, offset: int = 0
+) -> list[dict[str, Any]]:
     """
     A manifest that is valid on the first try.
 
@@ -151,11 +163,15 @@ def manifest_stub(name: str, species: str, bcidx: int = 0, n_probes: int = 24) -
     design = DesignParameters().resolve(reference=species in GOOD_SPECIES)
     return [
         {
-            "_comment": {key: value.format(max_bcidx=max_bcidx()) for key, value in MANIFEST_COMMENT.items()},
+            "_comment": {
+                key: value.format(max_bcidx=max_bcidx(), n_readouts=len(ORDER))
+                for key, value in MANIFEST_COMMENT.items()
+            },
             "name": name,
             "species": species,
             "codebook": "codebook.json",
             "bcidx": bcidx,
+            "offset": offset,
             "n_probes": n_probes,
             "design": design.model_dump(mode="json"),
         }
@@ -183,17 +199,79 @@ def check_manifest(path: Path) -> list[ProbeSet]:
                 f"{path}: probe set {probeset.name!r} has bcidx {probeset.bcidx}, but only "
                 f"0 to {limit} exist. Each index uses two rows of the header/footer table."
             )
+        if not 0 <= probeset.offset < len(ORDER):
+            raise ValueError(
+                f"{path}: probe set {probeset.name!r} has offset {probeset.offset}, but only "
+                f"{len(ORDER)} readout IDs exist, so offsets run from 0 to {len(ORDER) - 1}."
+            )
         codebook = path.parent / probeset.codebook
         if not codebook.exists():
             raise ValueError(
                 f"{path}: probe set {probeset.name!r} refers to {probeset.codebook}, which does "
                 f"not exist. Run `mkprobes make-codebook` first, or correct the path."
             )
+        check_codebook_offset(path, probeset)
 
     names = [p.name for p in probesets]
     if len(set(names)) != len(names):
         raise ValueError(f"{path}: probe set names must be unique, got {names}.")
+    check_disjoint_bits(path, probesets)
     return probesets
+
+
+def codebook_bits(path: Path, probeset: ProbeSet) -> set[int]:
+    """Every readout bit a probe set's codebook occupies, Blanks included."""
+    codebook = probeset.load_codebook(path.parent, include_blank=True)
+    return set(chain.from_iterable(codebook.values()))
+
+
+def check_codebook_offset(path: Path, probeset: ProbeSet) -> None:
+    """
+    The codebook has to start where the manifest says it does.
+
+    A codebook generated before the offset was edited, or with `--offset`
+    overriding the manifest, would otherwise sail through to a pooled hyb
+    with the wrong bits. The first position in the readout order that the
+    codebook uses must be the manifest's offset.
+    """
+    bits = codebook_bits(path, probeset)
+    if not bits:
+        return
+    if unknown := sorted(bits - set(ORDER)):
+        raise ValueError(
+            f"{path}: probe set {probeset.name!r}'s codebook {probeset.codebook} uses readout "
+            f"bit(s) {unknown}, but only 1 to {len(ORDER)} exist."
+        )
+    first = min(ORDER.index(bit) for bit in bits)
+    if first != probeset.offset:
+        raise ValueError(
+            f"{path}: probe set {probeset.name!r} has offset {probeset.offset}, but its codebook "
+            f"{probeset.codebook} starts at bit position {first}. Re-run `mkprobes make-codebook` "
+            f"so the codebook follows the manifest, or set offset to {first}."
+        )
+
+
+def check_disjoint_bits(path: Path, probesets: list[ProbeSet]) -> None:
+    """
+    Panels in one manifest are panels meant to be pooled, so their codebooks
+    must occupy disjoint readout bits. Two probe sets naming the same codebook
+    file are one panel described twice (as `run-panel` allows) and are not
+    compared.
+    """
+    seen: dict[str, tuple[str, set[int]]] = {}
+    for probeset in probesets:
+        key = str((path.parent / probeset.codebook).resolve())
+        if key in seen:
+            continue
+        bits = codebook_bits(path, probeset)
+        for other_name, other_bits in seen.values():
+            if shared := sorted(bits & other_bits):
+                raise ValueError(
+                    f"{path}: probe sets {other_name!r} and {probeset.name!r} share readout "
+                    f"bit(s) {shared}, so they cannot be hybridised together. Give one a "
+                    "different offset and re-run `mkprobes make-codebook` for it."
+                )
+        seen[key] = (probeset.name, bits)
 
 
 @click.command("init")
@@ -206,8 +284,11 @@ def check_manifest(path: Path) -> list[ProbeSet]:
     help="Path to the dataset to design against. Used in the generated README.",
 )
 @click.option("--bcidx", type=int, default=0, show_default=True, help="Header/footer pair for this panel.")
+@click.option("--offset", type=int, default=0, show_default=True,
+              help="Bit position this panel's codebook starts at. 0 for a first panel; the number of "
+              "bits already taken for a panel pooled with earlier ones.")
 @click.option("--force", is_flag=True, help="Overwrite files that already exist.")
-def init(project: Path, species: str, dataset: Path | None, bcidx: int, force: bool):
+def init(project: Path, species: str, dataset: Path | None, bcidx: int, offset: int, force: bool):
     """Create a probe design project, ready to run.
 
     Writes a commented target list, a valid manifest, and a README listing the
@@ -219,11 +300,16 @@ def init(project: Path, species: str, dataset: Path | None, bcidx: int, force: b
             f"only 0 to {limit} exist; each index uses two rows of the header/footer table.",
             param_hint="--bcidx",
         )
+    if not 0 <= offset < len(ORDER):
+        raise click.BadParameter(
+            f"only {len(ORDER)} readout IDs exist, so offsets run from 0 to {len(ORDER) - 1}.",
+            param_hint="--offset",
+        )
 
     dataset_path = dataset or Path("../data") / species
     files = {
         "genes.txt": GENES_TEMPLATE,
-        "manifest.json": json.dumps(manifest_stub(project.name, species, bcidx), indent=2) + "\n",
+        "manifest.json": json.dumps(manifest_stub(project.name, species, bcidx, offset=offset), indent=2) + "\n",
         "README.md": README_TEMPLATE.format(
             name=project.name,
             dataset=dataset_path,
@@ -265,7 +351,7 @@ def check_manifest_cli(manifest: Path):
     for probeset in probesets:
         click.echo(
             f"{probeset.name}: {probeset.species}, codebook {probeset.codebook}, "
-            f"bcidx {probeset.bcidx}, enzymes {'+'.join(SOLAR_RESTRICTION)}, "
+            f"bcidx {probeset.bcidx}, offset {probeset.offset}, enzymes {'+'.join(SOLAR_RESTRICTION)}, "
             f"design {probeset.design.describe()}"
         )
     click.echo(f"{manifest} is valid.")

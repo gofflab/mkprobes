@@ -30,7 +30,7 @@ from loguru import logger
 
 from ..ext.dataset import Dataset, _read_annotation_table, load_dataset
 from ..utils.targets import read_target_list
-from .codebook import CodebookPicker, bit_count, hash_codebook, n_to_bit
+from .codebook import CodebookPicker, ProbeSet, bit_count, hash_codebook, n_to_bit
 
 # MHD code matrices are vendored inside the package; any matrix not vendored
 # is generated into a user cache dir (never into the installed package).
@@ -209,6 +209,94 @@ def make_codebook(
     return {k: out[k] for k in sorted(out, key=lambda x: (x.startswith("Blank"), x))}
 
 
+def offset_for_codebook(out: Path, manifest: Path | None) -> tuple[int | None, Path | None]:
+    """
+    The `offset` of the probe set whose codebook this command is about to write.
+
+    The manifest is where a panel says which readout bits it occupies, so
+    `make-codebook` reads the offset from there: the `--manifest` given, or
+    else a `manifest.json` beside the output path, which is where
+    `mkprobes init` puts it. Matching is by codebook path, the same rule
+    `run-panel` uses for design settings. An explicit manifest that does not
+    list the codebook is an error; an implicit one is ignored with a warning.
+
+    Returns the offset and the manifest it came from, or `(None, None)`.
+    """
+    from pydantic import ValidationError
+
+    explicit = manifest is not None
+    manifest = manifest or out.parent / "manifest.json"
+    if not manifest.exists():
+        return None, None
+
+    try:
+        probesets = ProbeSet.from_manifest(manifest)
+    except ValidationError as e:
+        raise ValueError(f"{manifest} is not a valid manifest:\n{e}") from e
+
+    matches = [ps for ps in probesets if (manifest.parent / ps.codebook).resolve() == out.resolve()]
+    if not matches:
+        if explicit:
+            raise ValueError(
+                f"{manifest} has no probe set whose codebook is {out}. Add one, or pass -o with "
+                "the path the manifest names."
+            )
+        logger.warning(
+            f"{manifest} sits beside {out.name} but none of its probe sets name it, so its offset "
+            "is not used. Pass --manifest to use a manifest from elsewhere."
+        )
+        return None, None
+
+    offsets = {ps.offset for ps in matches}
+    if len(offsets) > 1:
+        raise ValueError(
+            f"{manifest} lists {out.name} under {len(matches)} probe sets with different offsets "
+            f"({sorted(offsets)}), so it is ambiguous where the codebook starts. Make them agree."
+        )
+    return matches[0].offset, manifest
+
+
+def resolve_offset(
+    out: Path, manifest: Path | None, flag: int | None, existing_codebook: Path | None
+) -> int:
+    """
+    Settles where the codebook starts, from the three places that can say so.
+
+    `--existing-codebook` wins: the offset is derived from it inside
+    `make_codebook`, and a manifest that states a different one is an error
+    rather than a silent disagreement. Otherwise a `--offset` flag overrides
+    the manifest for this run, with a warning, because the manifest is the
+    panel's statement of which bits it occupies and `check-manifest` will
+    hold the codebook to it. Otherwise the manifest's value, else 0.
+    """
+    from_manifest, source = offset_for_codebook(out, manifest)
+
+    if existing_codebook is not None:
+        if flag is not None:
+            raise ValueError("Specify either --offset or --existing-codebook, not both.")
+        derived = len(set(chain.from_iterable(json.loads(existing_codebook.read_text()).values())))
+        if from_manifest is not None and from_manifest != derived:
+            raise ValueError(
+                f"{source} gives this panel offset {from_manifest}, but --existing-codebook "
+                f"{existing_codebook} implies {derived}. Set the manifest's offset to {derived}, "
+                "or drop one of the two."
+            )
+        return 0  # make_codebook derives it from existing_codebook
+
+    if flag is not None:
+        if from_manifest is not None and from_manifest != flag:
+            logger.warning(
+                f"--offset {flag} overrides offset {from_manifest} from {source} for this run. "
+                f"Update the manifest to {flag}, or `check-manifest` will reject the codebook."
+            )
+        return flag
+
+    if from_manifest is not None:
+        logger.info(f"Offset {from_manifest} from {source}.")
+        return from_manifest
+    return 0
+
+
 def resolve_expression(
     dataset: Dataset | None,
     spec: str,
@@ -285,7 +373,12 @@ def resolve_expression(
 @click.option("--expression-column", type=str, default=None,
               help="Value column in the expression table (needed only when ambiguous).")
 @click.option("--n-bits", type=int, default=None, help="Code size; auto-sized from gene count if omitted.")
-@click.option("--offset", type=int, default=0, help="Readout-ID offset (mutually exclusive with --existing-codebook).")
+@click.option("--manifest", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="Manifest holding this panel's `offset` (default: manifest.json beside the output, "
+              "matched by codebook path).")
+@click.option("--offset", type=int, default=None,
+              help="Bit position the codebook starts at, overriding the manifest's `offset` "
+              "(mutually exclusive with --existing-codebook) [default: the manifest's value, else 0].")
 @click.option("--existing-codebook", type=click.Path(exists=True, dir_okay=False, path_type=Path),
               default=None, help="Extend this codebook: derives the offset and rejects gene/bit overlap.")
 @click.option("--iterations", type=int, default=200, show_default=True,
@@ -298,14 +391,27 @@ def make_codebook_cli(
     expression_spec: str | None,
     expression_column: str | None,
     n_bits: int | None,
-    offset: int,
+    manifest: Path | None,
+    offset: int | None,
     existing_codebook: Path | None,
     iterations: int,
     seed: int,
 ):
-    """Generate a codebook for a target list, optionally expression-informed."""
+    """Generate a codebook for a target list, optionally expression-informed.
+
+    Where the codebook starts in the readout order comes from the manifest's
+    `offset` for this panel, so panels hybridised together take disjoint
+    bits. `--offset` overrides it for this run, and `--existing-codebook`
+    derives it from a panel already designed.
+    """
     try:
         targets = read_target_list(genes)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    out = out or genes.with_suffix(".codebook.json")
+    try:
+        offset = resolve_offset(out, manifest, offset, existing_codebook)
     except ValueError as e:
         raise click.ClickException(str(e)) from e
 
@@ -324,7 +430,6 @@ def make_codebook_cli(
         iterations=iterations,
     )
 
-    out = out or genes.with_suffix(".codebook.json")
     out.write_text(json.dumps(codebook, indent=2))
 
     # Written beside the codebook, not just logged: the hash identifies which
