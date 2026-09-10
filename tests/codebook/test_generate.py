@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 from click.testing import CliRunner
 
+from conftest import flatten_cli_output
+
 from mkprobes.codebook.generate import (
     FORBIDDEN,
     ORDER,
@@ -247,7 +249,7 @@ class TestMakeCodebookCli:
         )
 
         assert res.exit_code != 0
-        assert "no probe set" in res.output
+        assert "no probe set" in flatten_cli_output(res.output)
 
     def test_uninformed_run_writes_json(self, tmp_path: Path):
         genes_file = tmp_path / "genes.txt"
