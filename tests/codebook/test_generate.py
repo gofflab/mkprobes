@@ -9,13 +9,18 @@ import numpy as np
 import pytest
 from click.testing import CliRunner
 
+from conftest import flatten_cli_output
+
 from mkprobes.codebook.generate import (
     FORBIDDEN,
+    ORDER,
     choose_bits,
     discover_matrices,
     make_codebook,
     make_codebook_cli,
+    offset_for_codebook,
     resolve_expression,
+    resolve_offset,
 )
 
 GENES = ["Och.687.1", "Och.958.1", "Och.576.10"]
@@ -60,6 +65,15 @@ class TestMakeCodebook:
 
         with pytest.raises(ValueError, match="overlap"):
             make_codebook(GENES, n_bits=10, existing_codebook=first, seed=0)
+
+    def test_offset_is_a_position_in_the_readout_order(self):
+        # A pooled second panel starts where the first stopped: offset 10
+        # after a 10-bit panel. The offset counts bit positions, so the
+        # readout IDs it lands on are the interleaved ones, not 11..20.
+        cb = make_codebook(GENES, n_bits=10, offset=10, seed=0)
+        used = set(chain.from_iterable(cb.values()))
+        assert used == set(ORDER[10:20]) == {12, 20, 5, 13, 21, 6, 14, 22, 7, 15}
+        assert not used & set(chain.from_iterable(make_codebook(GENES, n_bits=10, seed=0).values()))
 
     def test_offset_and_existing_mutually_exclusive(self):
         first = make_codebook(GENES, n_bits=10, seed=0)
@@ -141,7 +155,102 @@ class TestResolveExpression:
             resolve_expression(ds, "nope", GENES)
 
 
+def _manifest(path: Path, codebook: str = "codebook.json", offset: int = 10, name: str = "p") -> dict:
+    return {"name": name, "species": "octopus", "codebook": codebook, "bcidx": 0, "offset": offset}
+
+
+class TestOffsetFromManifest:
+    """
+    The manifest is where a panel says which bits it occupies. These pin that
+    `make-codebook` takes the offset from there, matched by codebook path the
+    way `run-panel` matches design settings.
+    """
+
+    def test_manifest_beside_output_supplies_offset(self, tmp_path: Path):
+        (tmp_path / "manifest.json").write_text(json.dumps([_manifest(tmp_path)]))
+        offset, source = offset_for_codebook(tmp_path / "codebook.json", None)
+        assert (offset, source) == (10, tmp_path / "manifest.json")
+
+    def test_no_manifest_means_no_offset(self, tmp_path: Path):
+        assert offset_for_codebook(tmp_path / "codebook.json", None) == (None, None)
+
+    def test_implicit_manifest_not_naming_the_codebook_is_ignored(self, tmp_path: Path):
+        (tmp_path / "manifest.json").write_text(json.dumps([_manifest(tmp_path, codebook="other.json")]))
+        assert offset_for_codebook(tmp_path / "codebook.json", None) == (None, None)
+
+    def test_explicit_manifest_not_naming_the_codebook_is_an_error(self, tmp_path: Path):
+        manifest = tmp_path / "m.json"
+        manifest.write_text(json.dumps([_manifest(tmp_path, codebook="other.json")]))
+        with pytest.raises(ValueError, match="no probe set whose codebook"):
+            offset_for_codebook(tmp_path / "codebook.json", manifest)
+
+    def test_disagreeing_duplicates_are_ambiguous(self, tmp_path: Path):
+        entries = [_manifest(tmp_path, offset=0, name="a"), _manifest(tmp_path, offset=10, name="b")]
+        (tmp_path / "manifest.json").write_text(json.dumps(entries))
+        with pytest.raises(ValueError, match="different offsets"):
+            offset_for_codebook(tmp_path / "codebook.json", None)
+
+    def test_flag_overrides_manifest(self, tmp_path: Path):
+        (tmp_path / "manifest.json").write_text(json.dumps([_manifest(tmp_path)]))
+        assert resolve_offset(tmp_path / "codebook.json", None, 20, None) == 20
+        assert resolve_offset(tmp_path / "codebook.json", None, None, None) == 10
+
+    def test_existing_codebook_must_agree_with_manifest(self, tmp_path: Path):
+        first = tmp_path / "first.json"
+        first.write_text(json.dumps(make_codebook(GENES, n_bits=10, seed=0)))
+        (tmp_path / "manifest.json").write_text(json.dumps([_manifest(tmp_path, offset=10)]))
+        assert resolve_offset(tmp_path / "codebook.json", None, None, first) == 0  # derived later
+
+        (tmp_path / "manifest.json").write_text(json.dumps([_manifest(tmp_path, offset=7)]))
+        with pytest.raises(ValueError, match="implies 10"):
+            resolve_offset(tmp_path / "codebook.json", None, None, first)
+
+    def test_invalid_manifest_is_reported(self, tmp_path: Path):
+        (tmp_path / "manifest.json").write_text('[{"name": "p"}]')
+        with pytest.raises(ValueError, match="not a valid manifest"):
+            offset_for_codebook(tmp_path / "codebook.json", None)
+
+
 class TestMakeCodebookCli:
+    def test_offset_comes_from_the_manifest(self, tmp_path: Path):
+        genes_file = tmp_path / "genes.txt"
+        genes_file.write_text("\n".join(GENES) + "\n")
+        out = tmp_path / "codebook.json"
+        (tmp_path / "manifest.json").write_text(json.dumps([_manifest(tmp_path, offset=10)]))
+
+        res = CliRunner().invoke(make_codebook_cli, [str(tmp_path), str(genes_file), "-o", str(out)])
+
+        assert res.exit_code == 0, res.output
+        used = set(chain.from_iterable(json.loads(out.read_text()).values()))
+        assert used == set(ORDER[10:20])
+
+    def test_offset_flag_wins_over_the_manifest(self, tmp_path: Path):
+        genes_file = tmp_path / "genes.txt"
+        genes_file.write_text("\n".join(GENES) + "\n")
+        out = tmp_path / "codebook.json"
+        (tmp_path / "manifest.json").write_text(json.dumps([_manifest(tmp_path, offset=10)]))
+
+        res = CliRunner().invoke(
+            make_codebook_cli, [str(tmp_path), str(genes_file), "-o", str(out), "--offset", "20"]
+        )
+
+        assert res.exit_code == 0, res.output
+        used = set(chain.from_iterable(json.loads(out.read_text()).values()))
+        assert used == set(ORDER[20:30])
+
+    def test_explicit_manifest_without_this_codebook_fails(self, tmp_path: Path):
+        genes_file = tmp_path / "genes.txt"
+        genes_file.write_text("\n".join(GENES) + "\n")
+        manifest = tmp_path / "m.json"
+        manifest.write_text(json.dumps([_manifest(tmp_path, codebook="other.json")]))
+
+        res = CliRunner().invoke(
+            make_codebook_cli, [str(tmp_path), str(genes_file), "--manifest", str(manifest)]
+        )
+
+        assert res.exit_code != 0
+        assert "no probe set" in flatten_cli_output(res.output)
+
     def test_uninformed_run_writes_json(self, tmp_path: Path):
         genes_file = tmp_path / "genes.txt"
         genes_file.write_text("\n".join(GENES) + "\n")

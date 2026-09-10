@@ -8,10 +8,11 @@ Conventions used across the SOLAR (splint/padlock, STARmap-style) probe-design w
   are skipped and everything after a `#` is a comment, including inline. Order
   is preserved (it feeds bit assignment); a target named twice is an error.
 - Codebook: JSON mapping `{gene_or_transcript: [bit_id_1, bit_id_2, bit_id_3]}`.
-- Manifest: JSON list of probe sets. Each carries the assembly fields and a
-  `design` block holding the settings `run-panel` designs that panel under.
-  `mkprobes init` writes a valid one; `mkprobes check-manifest` validates an
-  existing one.
+- Manifest: JSON list of probe sets. Each carries the assembly fields, an
+  `offset` saying which bit position its codebook starts at (so pooled panels
+  take disjoint bits), and a `design` block holding the settings `run-panel`
+  designs that panel under. Unknown fields are rejected. `mkprobes init`
+  writes a valid one; `mkprobes check-manifest` validates an existing one.
 - Candidate tables: parquet files (`*_crawled.parquet`, `*_all.parquet`, `*_bowtie.parquet`).
 - Screened sets: parquet (`*_screened_ol*.parquet`).
 - Final constructed probes: parquet (`*_final_*.parquet`).

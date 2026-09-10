@@ -65,18 +65,52 @@ For single-cell-derived optimization, the Python API offers
 `CodebookPickerSingleCell.find_optimalish`, which balances per-cell load by
 percentile.
 
-## Extending an existing panel
+## Pooling panels: the offset
 
-To add targets to a panel you have already ordered, without reusing bits:
+Two panels hybridised together must not share readout bits, so each codebook
+has to start where the previous one stopped. Where a panel starts is the
+`offset` field of its probe set in `manifest.json`, and `make-codebook` reads
+it from there: the manifest beside the output path (`-o`), or the one given
+with `--manifest`, matched by codebook path exactly as `run-panel` matches
+design settings.
+
+`offset` is a 0-based **bit position**, not a readout ID. Readout IDs are
+interleaved across imaging rounds, so a 10-bit panel at offset 0 does not use
+readouts 1 to 10; it uses the first ten in that order. Count bits, not IDs:
+the first panel sits at 0, and a panel pooled with it sits at the number of
+bits already taken.
+
+```bash
+mkprobes init panel_a --bcidx 0              # offset 0
+mkprobes init panel_b --bcidx 1 --offset 10  # after a 10-bit panel A
+
+mkprobes make-codebook data/mouse panel_a/genes.converted.tss.txt -o panel_a/codebook.json
+mkprobes make-codebook data/mouse panel_b/genes.converted.tss.txt -o panel_b/codebook.json
+```
+
+The second command logs `Offset 10 from panel_b/manifest.json`. To describe
+both panels in one manifest instead, list both probe sets in it, each with
+its own `codebook`, `bcidx` and `offset`; `check-manifest` then refuses any
+pair whose codebooks share a bit, and refuses a codebook that does not start
+at its probe set's offset. Each panel also needs its own `bcidx`, since the
+offset separates readouts and `bcidx` separates amplification.
+
+Forty-nine readout IDs exist in all, which bounds how many bits pooled panels
+can take between them.
+
+`--offset` overrides the manifest for one run, with a warning, and
+`check-manifest` will then hold the codebook to whatever the manifest says.
+To extend a panel you have already ordered without reusing its bits, pass
+the old codebook instead:
 
 ```bash
 mkprobes make-codebook data/mouse new_genes.tss.txt -o panel_b/codebook.json \
     --existing-codebook panel_a/codebook.json
 ```
 
-This derives the bit offset from the old codebook and refuses gene or bit
-overlap rather than silently colliding. `--offset` sets the offset by hand and
-is mutually exclusive with `--existing-codebook`.
+This derives the offset from the old codebook's bit count and refuses gene or
+bit overlap rather than silently colliding. It is mutually exclusive with
+`--offset`, and a manifest that states a different offset is an error.
 
 ## Which codebook produced a given file
 

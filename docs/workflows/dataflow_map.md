@@ -12,7 +12,7 @@ The steps themselves are in {doc}`../getting_started`.
 | 0. project | `init` | a directory name | `genes.txt`, `manifest.json`, `README.md` |
 | 1. dataset | `prepare`, `ingest`, or `create-dataset` | species choice, or genome + GTF, or a FASTA | indexed dataset directory (bowtie2 index, `.jf` k-mer files, annotation) |
 | 2. targets | `chkgenes`, then `convert-to-transcripts` | target list + dataset | `genes.converted.txt`, then `genes.converted.tss.txt` |
-| 3. codebook | `make-codebook` | transcript list (+ optional expression table) | `codebook.json` + a logged hash |
+| 3. codebook | `make-codebook` | transcript list, the manifest's `offset` (+ optional expression table) | `codebook.json` + a logged hash |
 | 4. probes | `run-panel` (or `candidates`, `screen`, `construct`) | dataset + codebook | per-target parquet chain, ending in `_final_` |
 | 5. panel QC | `filter-genes` | output directory + target list | `genes.pass.txt`, warnings per thin target |
 | 6. assembly | `check-manifest`, then `assemble short` / `assemble gen` | `manifest.json` + `_final_` parquet files | `generated/`: pool, FASTAs, provenance |

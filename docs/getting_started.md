@@ -132,6 +132,10 @@ which is not what most people expect.
 Have per-target expression data? `--expression <table>` balances signal across
 readout bits. It is optional and the panel works without it.
 
+Designing a second panel to hybridise with this one? Its bits must not overlap.
+Set `offset` in that panel's `manifest.json` (or `mkprobes init --offset`) and
+`make-codebook` starts there.
+
 Details: {doc}`workflows/design_the_codebook`.
 
 ## 4. Design probes for every target

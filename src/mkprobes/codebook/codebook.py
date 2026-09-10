@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import polars as pl
 from loguru import logger
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from scipy.stats import entropy
 
 from ..design import DesignParameters
@@ -273,10 +273,25 @@ class CodebookPickerSingleCell(CodebookPicker):
 
 
 class ProbeSet(BaseModel):
+    """
+    One panel in a manifest.
+
+    Unknown keys are rejected: a misspelt field used to be silently ignored,
+    which for `offset` would mean two panels quietly sharing readout bits. The
+    `_comment` block `mkprobes init` writes is the one tolerated extra.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     species: str
     codebook: str
     bcidx: int
+    #: Where this panel's codebook starts in the readout order, as a 0-based
+    #: bit position (not a readout ID). `make-codebook` reads it from here so
+    #: panels hybridised together take disjoint bits: panel A at 0, and panel B
+    #: at A's bit count. Pair it with a distinct `bcidx`.
+    offset: int = 0
     existing: str | None = None
     single: bool = False
     all_bit: int = 29
@@ -285,6 +300,8 @@ class ProbeSet(BaseModel):
     #: `run-panel` reads them from here; assembly checks the outputs against
     #: them. Left out, every setting is the built-in default.
     design: DesignParameters = Field(default_factory=DesignParameters)
+    #: Free-text notes; `mkprobes init` writes a field-by-field explanation here.
+    comment: dict[str, Any] | None = Field(default=None, alias="_comment", exclude=True)
 
     def codebook_path(self, path: Path | str) -> Path:
         """Resolves this probe set's codebook, falling back to a bare filename."""
